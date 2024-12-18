@@ -5,26 +5,27 @@
 #---------------------------------------------------------------------
 # Load packages
 
-library(rgdal)
+#library(rgdal)
 #library(sp)
 #library(raster)
-library(readOGR)
+#library(readOGR)
+library(sf)
 library(terra)
 library(mblm)
 library(modifiedmk)
 
 
-library(rgeos)
-library(tidyverse)
-library(dplyr)
-library(ggplot2)
+#library(rgeos)
+#library(tidyverse)
+#library(dplyr)
+#library(ggplot2)
 
 # USGS-derived packages to retrieve data in R
 # https://owi.usgs.gov/R/dataRetrieval.html#1 (tutorial)
 #install.packages("dataRetrieval")
 library(dataRetrieval)
 #GRAN_pkg <- available.packages(contrib.url("https://owi.usgs.gov/R"))
-names(GRAN_pkg[,1]) # Geological Survey R Archive Network 
+#names(GRAN_pkg[,1]) # Geological Survey R Archive Network 
 
 #---------------------------------------------------------------------
 #---------------------------------------------------------------------
@@ -96,24 +97,25 @@ annWL <- function(site_number){
 # Get USGS data from NWIS database
 
 # Use Hydrographic Areas (HAs) to spatially-filter groundwater sites
+# Could use other polygons (i.e. WBDs aka HUCs)
 gdb <- "K:\\GIS3\\Projects\\GDE\\Maps\\GDE_Threats\\GDE_Threats.gdb" # Location (geodatabase in this case) for hydrographics areas (HAs)
-subset(ogrDrivers(), grepl("GDB", name))
-fc_list <- ogrListLayers(gdb)
-print(fc_list)
+fc_list <- st_layers(gdb)
+ha <- sf::st_read(gdb, layer = "hydrographic_basin_boundaries")
+ha <- sf::st_transform(ha, crs = "+proj=longlat +ellps=GRS80 +datum=NAD83 +no_defs ")
+plot(ha['HYD_AREA'])
 
-ha <- readOGR(dsn=gdb,layer="hydrographic_basin_boundaries")
-ha <- spTransform(ha, CRS("+proj=longlat +ellps=GRS80 +datum=NAD83 +no_defs "))
-plot(ha)
+# You can read in polygons from any format (gdb feature class, shapefile, etc.)
+# Just needs to be written to an sf object
 
 # State of Nevada is too large to grab all water level data at once using dataRetieval package
 # Loop through all basins to:
 # - run readNWISdata() function using each HA to select groundwater sites
-# - 
-
+# - download groundwater level observations for the sites
+# - run annWL() function to calculate trend, or note whether sites don't meet criteria
 
 
 # Calculate trends and format data
-# Create empty data frame
+# Create empty data frame to populate
 annWL_df <- data.frame(SITENO = as.character(), New_Pval = as.numeric(), Old_Pval = as.numeric(),
                        n_effective = as.numeric(), n_raw = as.numeric(), Sens_Slope = as.numeric(),
                        MinYear = as.numeric(), MaxYear = as.numeric(), Notes = as.character())
@@ -121,6 +123,7 @@ annWL_df <- data.frame(SITENO = as.character(), New_Pval = as.numeric(), Old_Pva
 # Use for-loop and annWL() to populate empty data frame with trend stats
 for (j in seq(1, nrow(ha))){
   # Get sites for one basin
+  # Create bounding box for the HA to get sites
   poly <- ha[j,]
   av_box <- poly@bbox
   mybox <- round(c(av_box[1,1], av_box[2,1], av_box[1,2], av_box[2,2]), 4) # bounding box lat/long coordiates
@@ -135,7 +138,7 @@ for (j in seq(1, nrow(ha))){
     av_points <- SpatialPointsDataFrame(coords = data.frame(av_sites_loc$dec_long_va, av_sites_loc$dec_lat_va),
                                         data = av_sites_loc)
     # Clip sites to Area of Interest
-    crs(av_points) <- crs(poly)
+    crs(av_points) <- crs(poly) # set coord system of site spoints to be the same as selecitng polygon
     #crs(av_points) <- CRS("+proj=longlat +datum=WGS84 +ellps=WGS84 +towgs84=0,0,0") # Set CRS of spatialPointsDataFrame
     nwis <- av_points[poly, ] # Grab points within basin polygon
     if (nrow(nwis) == 0){
