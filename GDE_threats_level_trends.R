@@ -10,6 +10,7 @@
 #library(raster)
 #library(readOGR)
 library(sf)
+library(sp)
 library(terra)
 library(mblm)
 library(modifiedmk)
@@ -40,8 +41,8 @@ library(dataRetrieval)
 # e.g. a site will be included if it has one or more observations from 1999, 2000, 2001, 2013, 2018, 2020
 # if a site meets the criteria, the function will calculate a trend and statistics
 
-annWL <- function(site_number){
-  x <- s[s$site_no==site_number,]
+annWL <- function(gw_observations, site_number){
+  x <- gw_observations[gw_observations$site_no==site_number,]
   x$lev_va <- -1 * x$lev_va # Reverse groundwater values so sens-slope trend is negative where depth to gw is increasing
   # If there are zero (less than one) observations, do not include site in analysis
   if (nrow(x) < 1){
@@ -120,27 +121,46 @@ annWL_df <- data.frame(SITENO = as.character(), New_Pval = as.numeric(), Old_Pva
                        n_effective = as.numeric(), n_raw = as.numeric(), Sens_Slope = as.numeric(),
                        MinYear = as.numeric(), MaxYear = as.numeric(), Notes = as.character())
 
+ha <- ha_full %>% dplyr::filter(HYD_AREA %in% c(198, 199, 115, 108))
+
+# pick up here; this one should work (has plenty of valid obsevations)
+annWL(gw_observations, site_number = "390225119100801")
+
+
 # Use for-loop and annWL() to populate empty data frame with trend stats
 for (j in seq(1, nrow(ha))){
   # Get sites for one basin
-  # Create bounding box for the HA to get sites
   poly <- ha[j,]
-  av_box <- poly@bbox
-  mybox <- round(c(av_box[1,1], av_box[2,1], av_box[1,2], av_box[2,2]), 4) # bounding box lat/long coordiates
-  av_gw <- readNWISdata(bBox = mybox, service="gwlevels", parameterCd="72019") # Sites with water level below surface measurements
-  av_sites <- as.numeric(av_gw$site_no)
-  if (is.na(av_gw$site_no)){
+  print(paste(poly$HYD_AREA, ": ", poly$HYD_AREA_N, sep=""))
+  
+  # Create bounding box for the HA to get sites
+  #ha_box <- poly@bbox
+  ha_box <- st_bbox(poly)
+  plot(ha_box)
+  mybox <- round(c(ha_box[1], ha_box[2], ha_box[3], ha_box[4]), 4) # bounding box lat/long coordinates
+  
+  # Grab sites from the "groundwater" service with parameter code below
+  ha_gw <- readNWISdata(bBox = mybox, service="gwlevels", parameterCd="72019") # Sites with water level below surface measurements
+
+  # Check for valid sites in HA (or selecting polygon)
+  # If no sites found, print name of HA
+  if (length(ha_gw) == 0) {
     print(cat(poly$HYD_AREA_N, "Has no valid sites"))
-    # Careful, this might skip sites in hyd areas
-    # Might be better to remove problematic areas from the loop
-  } else{
-    av_sites_loc <- readNWISsite(av_sites) # Get location data for sites
-    av_points <- SpatialPointsDataFrame(coords = data.frame(av_sites_loc$dec_long_va, av_sites_loc$dec_lat_va),
-                                        data = av_sites_loc)
-    # Clip sites to Area of Interest
-    crs(av_points) <- crs(poly) # set coord system of site spoints to be the same as selecitng polygon
-    #crs(av_points) <- CRS("+proj=longlat +datum=WGS84 +ellps=WGS84 +towgs84=0,0,0") # Set CRS of spatialPointsDataFrame
-    nwis <- av_points[poly, ] # Grab points within basin polygon
+  } 
+  
+  # If HA has valid sites, get location data and convert sites to spatialpointsdataframe
+  else{
+    ha_sites <- as.numeric(ha_gw$site_no)
+    ha_sites_loc <- readNWISsite(ha_sites) # Get location data for sites
+    ha_points <- sp::SpatialPointsDataFrame(coords = data.frame(ha_sites_loc$dec_long_va, ha_sites_loc$dec_lat_va),
+                                            data = ha_sites_loc) # Convert to spatialpointsdataframe
+    ha_points <- st_as_sf(ha_points) # Convert that to sf object
+    
+    # Clip sites to Area of Interest (selecting polygon)
+    st_crs(ha_points) <- st_crs(poly) # set coord system of site points to be the same as selecting polygon
+    nwis <- st_filter(ha_points, poly) # Grab points within basin polygon
+
+    # Perform checks; populate a row with NA values if the HA contains no groundwater observations
     if (nrow(nwis) == 0){
       print(cat(poly$HYD_AREA, "Does not have any NWIS sites"))
       df <- data.frame(SITENO = poly$HYD_AREA, New_Pval = NA, Old_Pval = NA,
@@ -149,28 +169,39 @@ for (j in seq(1, nrow(ha))){
                        Notes = "No NWIS sites in basin")
       annWL_df <- rbind(annWL_df, df)
     }
+    
+    # Get groundwater level data for final list of sites in given time period
     else {
-      nwis_sites <- nwis@data$site_no # Site numbers of sites in polygon
-      # Get groundwater level data for final list of sites in given time period
+      nwis_sites <- nwis$site_no # Unique site IDs for the sites in the polygon
       start.date <- "1984-01-01"
       end.date <- "2021-12-31"
-      s <- readNWISgwl(nwis_sites, startDate = start.date, endDate = end.date)
-      # Use for-loop and annWL() to populate empty data frame with trend stats
-      for (i in seq(1, nrow(nwis))){
-        siteno <- nwis[i,]$site_no
-        bad_sites <- c("393233115594801", "404808116220801")
-        if (siteno %in% bad_sites){
-          print("YIKES don't use this one")
-        } else{
-          site_df <- annWL(site_number = siteno)
-          annWL_df <- rbind(annWL_df, site_df) 
+      gw_observations <- readNWISgwl(nwis_sites, startDate = start.date, endDate = end.date)
+      
+      # # Skip site if no data returned from search (i.e. only one observation made in the 1960s)
+      # if (nrow(gw_observations) == 0){
+      #   print(paste("Skipping site", nwis$site_no))
+      # } else{ 
+      # 
+        # For each site, run annWL() to populate empty data frame with trend stats (or not, if it doesn't meet criteria)
+        for (i in seq(1, nrow(nwis))){
+          siteno <- nwis[i,]$site_no
+          
+          # Skip over "bad sites" (sites that broke the annWL function or that we know don't meet the criteria)
+          bad_sites <- c("393233115594801", "404808116220801")
+          if (siteno %in% bad_sites){
+            print("YIKES don't use this one")
+          } else{
+            site_df <- annWL(gw_observations, site_number = siteno)
+            annWL_df <- rbind(annWL_df, site_df) 
+          }
         }
       }
     }
   }
 }
-annWL_df_NWIS <- annWL_df
 
+# Define dataframe of annual water levels for NWIS groundwater sites
+annWL_df_NWIS <- annWL_df
 
 # Remove sites where siteid is BAD
 # ex. nchar(as.character(annWL_df_NWIS$SITENO[5611]))
