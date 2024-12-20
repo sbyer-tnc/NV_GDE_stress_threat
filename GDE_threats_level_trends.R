@@ -530,18 +530,19 @@ annWL_ndwr <- function(site_name){
   }
   else {
     print(paste(site_name,"gets a trend calculation..."))
-    #just_dates <- unlist(strsplit(as.character(x$Measure_date), "[ ]"))
-    #x$Date_char <- just_dates[-grep(":", just_dates)] # Removes time stamps
-    ##x$Date_char <- just_dates[!just_dates == "0:00:00"]
-    # just_dates <- as.Date(as.character(x$Measure_date), "%m/%d/%Y")
-    # x$Date_char <- just_dates
-    # x <- x %>% mutate(DATE = as.Date(Date_char, format = "%m/%d/%Y"))
-    annavg <- aggregate(Water_Level ~ cut(DATE, "1 year"), x, mean) # Summarize mean value across  calendar year
-    # annavg$YEAR <- as.numeric(substr(annavg$`cut(DATE, "1 year")`, 1, 4))
+    
+    # Summarize mean value across  calendar year
+    annavg <- aggregate(Water_Level ~ cut(DATE, "1 year"), x, mean) 
+    annavg[,1] <- as.numeric(format(as.Date(annavg[,1]), "%Y"))
+    colnames(annavg)[1] <- "YEAR"
+    
+    # Check whetehr there are enough years of measurements to calculate a trend
+    # Calculate if there are at least 5 years of data
+    # also does a variance check (it should be > 0)
     if (var(annavg$Water_Level) > 0 & nrow(annavg) >= 5){
       modMK <- data.frame(t(mmkh(annavg$Water_Level)))
       site_df <- data.frame(SITENO = site_name, New_Pval = modMK$new.P.value, Old_Pval = modMK$old.P.value,
-                       n_effective = modMK$N.N., n_raw = nrow(annavg[which(!is.na(annavg$lev_va)),]),
+                       n_effective = modMK$N.N., n_raw = nrow(annavg[which(!is.na(annavg$Water_Level)),]),
                        Sens_Slope = modMK$Sen.s.slope, MinYear = min(annavg$YEAR), MaxYear = max(annavg$YEAR), Notes = NA)
     } else if (var(annavg$Water_Level) == 0 & nrow(annavg) >= 5){
       print(paste(site_name,"Only has one water level value - cannot run modified mann-kendall"))
@@ -564,24 +565,6 @@ annWL_ndwr <- function(site_name){
 test <- annWL_ndwr(site_name = "137B N09 E43 03AAAD1") # Trend gets calculated
 test <- annWL_ndwr(site_name = "143 S02 E40 10CC  1") # Trend gets calculated
 print(test)
-
-
-
-# Testing on problem sites...
-#site_name <- "021 N33 E22 36ACBC1"
-site_name <- "001 N47 E30 04BA" # This one should work
-site_name <- "227A S12 E50 33A  1"
-x <- wellobs[wellobs$Site_Name_Fix==site_name,]
-print(x)
-annWL_ndwr(x$Site_Name)
-
-# Format Date field
-just_dates <- as.Date(as.character(x$Measure_date), "%m/%d/%Y")
-x$Date_char <- just_dates
-
-x <- x %>% mutate(DATE = as.Date(Date_char, format = "%m/%d/%Y"))
-#annavg <- aggregate(Water_Level ~ cut(DATE, "1 year"), x, mean)
-x$YEAR <- as.numeric(substr(x$`cut(DATE, "1 year")`, 1, 4))
 
 
 #----------------------------------
