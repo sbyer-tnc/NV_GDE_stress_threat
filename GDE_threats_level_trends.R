@@ -1,5 +1,5 @@
 # Groundwater level data
-# Consolidate data from NWIS and NDWR sites to claculate a trend in groundwater level for each site
+# Consolidate data from NWIS and NDWR sites to calculate a trend in groundwater level for each site
 # Calculate trends using modified mann-kendall package
 #
 #---------------------------------------------------------------------
@@ -14,6 +14,7 @@ library(sp)
 library(terra)
 library(mblm)
 library(modifiedmk)
+library(dplyr)
 
 
 #library(rgeos)
@@ -44,6 +45,7 @@ library(dataRetrieval)
 annWL <- function(gw_observations, site_number){
   x <- gw_observations[gw_observations$site_no==site_number,]
   x$lev_va <- -1 * x$lev_va # Reverse groundwater values so sens-slope trend is negative where depth to gw is increasing
+  x <- x[!(is.na(x$lev_va)),] # Remove any NoData values from gw level
   # If there are zero (less than one) observations, do not include site in analysis
   if (nrow(x) < 1){
     print(cat(site_number,"does not have enough annual readings to calculate trend"))
@@ -106,7 +108,7 @@ ha <- sf::st_transform(ha, crs = "+proj=longlat +ellps=GRS80 +datum=NAD83 +no_de
 plot(ha['HYD_AREA'])
 
 # You can read in polygons from any format (gdb feature class, shapefile, etc.)
-# Just needs to be written to an sf object
+# It just needs to be written to an sf object
 
 # State of Nevada is too large to grab all water level data at once using dataRetieval package
 # Loop through all basins to:
@@ -121,11 +123,12 @@ annWL_df <- data.frame(SITENO = as.character(), New_Pval = as.numeric(), Old_Pva
                        n_effective = as.numeric(), n_raw = as.numeric(), Sens_Slope = as.numeric(),
                        MinYear = as.numeric(), MaxYear = as.numeric(), Notes = as.character())
 
-ha <- ha_full %>% dplyr::filter(HYD_AREA %in% c(198, 199, 115, 108))
 
-# pick up here; this one should work (has plenty of valid obsevations)
-annWL(gw_observations, site_number = "390225119100801")
-
+# # pick up here; this one should work (has plenty of valid obsevations)
+# ha_full <- ha
+# ha <- ha_full %>% dplyr::filter(HYD_AREA %in% c(198, 199, 115, 108))
+# plot(ha['HYD_AREA'])
+# annWL(gw_observations, site_number = "390225119100801")
 
 # Use for-loop and annWL() to populate empty data frame with trend stats
 for (j in seq(1, nrow(ha))){
@@ -141,7 +144,8 @@ for (j in seq(1, nrow(ha))){
   
   # Grab sites from the "groundwater" service with parameter code below
   ha_gw <- readNWISdata(bBox = mybox, service="gwlevels", parameterCd="72019") # Sites with water level below surface measurements
-
+  print(paste("Number of records found in HA bounding box:", length(ha_gw)))
+  
   # Check for valid sites in HA (or selecting polygon)
   # If no sites found, print name of HA
   if (length(ha_gw) == 0) {
@@ -159,6 +163,7 @@ for (j in seq(1, nrow(ha))){
     # Clip sites to Area of Interest (selecting polygon)
     st_crs(ha_points) <- st_crs(poly) # set coord system of site points to be the same as selecting polygon
     nwis <- st_filter(ha_points, poly) # Grab points within basin polygon
+    print(paste("Number of sites found in HA:", nrow(nwis)))
 
     # Perform checks; populate a row with NA values if the HA contains no groundwater observations
     if (nrow(nwis) == 0){
@@ -177,11 +182,16 @@ for (j in seq(1, nrow(ha))){
       end.date <- "2021-12-31"
       gw_observations <- readNWISgwl(nwis_sites, startDate = start.date, endDate = end.date)
       
-      # # Skip site if no data returned from search (i.e. only one observation made in the 1960s)
-      # if (nrow(gw_observations) == 0){
-      #   print(paste("Skipping site", nwis$site_no))
-      # } else{ 
-      # 
+      # Skip site if no data returned from search (i.e. only one observation made in the 1960s)
+      if (nrow(gw_observations) == 0){
+        print(paste("Skipping site", nwis$site_no))
+        df <- data.frame(SITENO = poly$HYD_AREA, New_Pval = NA, Old_Pval = NA,
+                         n_effective = NA, n_raw = NA,
+                         Sens_Slope = NA, MinYear = NA, MaxYear = NA,
+                         Notes = "No NWIS sites in basin that meet critera")
+        annWL_df <- rbind(annWL_df, df)
+      } else{
+
         # For each site, run annWL() to populate empty data frame with trend stats (or not, if it doesn't meet criteria)
         for (i in seq(1, nrow(nwis))){
           siteno <- nwis[i,]$site_no
@@ -202,21 +212,19 @@ for (j in seq(1, nrow(ha))){
 
 # Define dataframe of annual water levels for NWIS groundwater sites
 annWL_df_NWIS <- annWL_df
+head(annWL_df_NWIS)
 
 # Remove sites where siteid is BAD
 # ex. nchar(as.character(annWL_df_NWIS$SITENO[5611]))
-rem_index <- vector()
+rem_index <- vector() # Empty vector to populate with "bad" site IDs
 for(i in seq(1, nrow(annWL_df_NWIS))){
   if(nchar(as.character(annWL_df_NWIS$SITENO[i])) < 7){
-    print("Bad site ID")
-    print(as.vector(annWL_df_NWIS$SITENO[i]))
+    print(paste("Removing bad site ID:", as.vector(annWL_df_NWIS$SITENO[i])))
     rem_index <- c(rem_index, i)
   }
 }
 annWL_df_NWIS$SITENO[rem_index] # Print bad site numbers
 annWL_df_NWIS <- annWL_df_NWIS[-c(rem_index),] # Remove bad site numbers from df
-dim(annWL_df)
-dim(annWL_df_NWIS)
 
 # Remove a couple additional sites
 rem_sites <- c(364640114050301, 364727114045601) # These sites have 2 entries each - remove one at least
@@ -227,9 +235,13 @@ dim(annWL_df_NWIS)
 
 
 #----------------------------------
+# TNC received additional groundwater well data from Central Nevada Regional Water Authority
+# These data were not available on NWIS (but may be at a later date) and had to be added separately
+
 # Append CNRWA data to NWIS sites
 # Central NV Regional Water Authority has additional data not-yet integrated in NWIS
-cnrwa <- read.csv("E:\\RCF Data Recovery\\Recovered Files\\P00\\GDE_Threats\\Hydrology\\cnrwa_add_wells.csv")
+cnrwa <- read.csv("path_to_csv\\cnrwa_add_well.csv")
+cnrwa <- read.csv("K:\\GIS3\\Projects\\GDE\\Tables\\cnrwa_add_wells.csv")
 head(cnrwa)
 cnrwa <- cnrwa %>% dplyr::mutate(DATE = as.Date(Date, format = "%m/%d/%Y"))
 cnrwa$YEAR <- as.numeric(substr(cnrwa$DATE, 1, 4)) 
@@ -248,15 +260,105 @@ new_trend <- function(site_number){
   cnrwa_site_data <- cnrwa[cnrwa$site_no==site_number,]
   #print(og_site_trend$MaxYear)
   #print(max(cnrwa_site_data$YEAR))
+  
+  # If most recent year of NWIS data is earlier than CNRWA,
+  # Or if there is no data for NWIS compared to CNRWA:
   if ((og_site_trend$MaxYear < max(cnrwa_site_data$YEAR)) | is.na(og_site_trend$MaxYear)){
     print(paste("Re-calculate and replace site trend", site_number, sep=": "))
     # Get OG NWIS gw level readings
     start.date <- "1984-01-01"
     end.date <- "2021-12-31"
     nwis_lvls <- readNWISgwl(site_number, startDate = start.date, endDate = end.date)
+    # Make sure dataframe from NWIS is correct (has the correct column names)
+    if ("lev_va" %in% colnames(nwis_lvls)){
+      nwis_lvls$lev_va <- -1 * nwis_lvls$lev_va
+      # Append CNRWA gw levels - okay if it repeats a reading
+      # i.e. 2010 readings from both - will be averaged to annual 2010 reading
+      append_lvls <- full_join(nwis_lvls, cnrwa_site_data, by=c("site_no" = "site_no", "lev_va" = "lvl_below_surf", 
+                                                                "lev_dt" = "DATE"))
+      annavg <- aggregate(lev_va ~ cut(lev_dt, "1 year"), append_lvls, mean)
+      annavg$YEAR <- as.numeric(substr(annavg$`cut(lev_dt, "1 year")`, 1, 4))
+      annavg <- annavg %>% dplyr::filter(YEAR >= 1984)
+      if (var(annavg$lev_va) > 0 & nrow(annavg) >= 5){
+        modMK <- data.frame(t(mmkh(annavg$lev_va)))
+        df <- data.frame(SITENO = site_number, New_Pval = modMK$new.P.value, Old_Pval = modMK$old.P.value,
+                         n_effective = modMK$N.N., n_raw = nrow(annavg[which(!is.na(annavg$lev_va)),]),
+                         Sens_Slope = modMK$Sen.s.slope, MinYear = min(annavg$YEAR), MaxYear = max(annavg$YEAR), 
+                         Notes = "USGS groundwater levels supplemented by 2021 CNRWA report data")
+      } else if (var(annavg$lev_va) == 0 & nrow(annavg) >= 5){
+        print(cat(site_number,"Only has one water level value - cannot run modified mann-kendall"))
+        df <- data.frame(SITENO = site_number, New_Pval = NA, Old_Pval = NA,
+                         n_effective = NA, n_raw = nrow(annavg[which(!is.na(annavg$lev_va)),]),
+                         Sens_Slope = 0, MinYear = min(annavg$YEAR), MaxYear = max(annavg$YEAR), 
+                         Notes = "Only one water level value; trend == 0")
+      } else {
+        print(cat(site_number,"does not have enough annual readings to calculate trend"))
+        df <- data.frame(SITENO = site_number, New_Pval = NA, Old_Pval = NA,
+                         n_effective = NA, n_raw = NA,
+                         Sens_Slope = NA, MinYear = min(annavg$YEAR), MaxYear = max(annavg$YEAR),
+                         Notes = "Not enough annual measurements")
+      }
+    } else {
+      print(cat(site_number,"does not have enough annual readings to calculate trend"))
+      df <- data.frame(SITENO = site_number, New_Pval = NA, Old_Pval = NA,
+                       n_effective = NA, n_raw = NA,
+                       Sens_Slope = NA, MinYear = NA, MaxYear = NA,
+                       Notes = "Not enough annual measurements")
+    }
+    return(df)
+  }
+}
+
+# Recalculate
+# Dataframe to populate
+nwis_replace <- data.frame(SITENO = as.character(), New_Pval = as.numeric(), Old_Pval = as.numeric(),
+                           n_effective = as.numeric(), n_raw = as.numeric(), Sens_Slope = as.numeric(),
+                           MinYear = as.numeric(), MaxYear = as.numeric(), Notes = as.character())
+
+# Populate dataframe
+for(i in seq(1, length(check_nwis))){
+  s <- check_nwis[i]
+  x <- new_trend(s)
+  nwis_replace <- rbind(nwis_replace, x)
+}
+nwis_replace
+
+# Replace values in NWIS dataframe with new, recalculated values
+for(i in seq(1, nrow(nwis_replace))){
+  x <- as.vector(nwis_replace$SITENO[i])
+  print(x)
+  nwis_index <- which(annWL_df_NWIS$SITENO==x)
+  print(nwis_index)
+  annWL_df_NWIS[nwis_index,] <- nwis_replace[i,]
+}
+
+# Checking some individual sites
+annWL_df_NWIS[which(annWL_df_NWIS$SITENO==403515114571701),]
+annWL_df[which(annWL_df$SITENO==403515114571701),]
+#nwis_replace[which(nwis_replace$SITENO==as.vector(annWL_df_NWIS[659,]$SITENO)),]
+#which(nwis_replace$SITENO==annWL_df_NWIS[659]$SITENO)
+
+
+#----------------------------------
+# See which NEW sites are in the 2021 CNRWA report
+# Sites that I dont already have in the trend calculations
+`%notin%` <- Negate(`%in%`)
+add_nwis <- unique(cnrwa[c(which(cnrwa$site_no %notin% annWL_df_NWIS$SITENO)),]$site_no)
+print(add_nwis)
+add_nwis <- add_nwis[-c(1, 3, 4, 10)] # Remove sites that would not be part of NWIS (incorrect site number scheme)
+add_nwis
+
+nwis_new <- data.frame(SITENO = as.character(), New_Pval = as.numeric(), Old_Pval = as.numeric(),
+                           n_effective = as.numeric(), n_raw = as.numeric(), Sens_Slope = as.numeric(),
+                           MinYear = as.numeric(), MaxYear = as.numeric(), Notes = as.character())
+for(i in seq(1, length(add_nwis))){
+  site_number <- add_nwis[i]
+  cnrwa_site_data <- cnrwa[cnrwa$site_no==site_number,]
+  start.date <- "1984-01-01"
+  end.date <- "2021-12-31"
+  nwis_lvls <- readNWISgwl(add_nwis[i], startDate = start.date, endDate = end.date)
+  if ("lev_va" %in% colnames(nwis_lvls)){
     nwis_lvls$lev_va <- -1 * nwis_lvls$lev_va
-    # Append CNRWA gw levels - okay if it repeats a reading
-    # i.e. 2010 readings from both - will be averaged to annual 2010 reading
     append_lvls <- full_join(nwis_lvls, cnrwa_site_data, by=c("site_no" = "site_no", "lev_va" = "lvl_below_surf", 
                                                               "lev_dt" = "DATE"))
     annavg <- aggregate(lev_va ~ cut(lev_dt, "1 year"), append_lvls, mean)
@@ -281,76 +383,6 @@ new_trend <- function(site_number){
                        Sens_Slope = NA, MinYear = min(annavg$YEAR), MaxYear = max(annavg$YEAR),
                        Notes = "Not enough annual measurements")
     }
-    return(df)
-  }
-}
-
-# Recalculate
-nwis_replace <- data.frame(SITENO = as.character(), New_Pval = as.numeric(), Old_Pval = as.numeric(),
-                           n_effective = as.numeric(), n_raw = as.numeric(), Sens_Slope = as.numeric(),
-                           MinYear = as.numeric(), MaxYear = as.numeric(), Notes = as.character())
-for(i in seq(1, length(check_nwis))){
-  s <- check_nwis[i]
-  x <- new_trend(s)
-  nwis_replace <- rbind(nwis_replace, x)
-}
-nwis_replace
-
-# Replace
-for(i in seq(1, nrow(nwis_replace))){
-  x <- as.vector(nwis_replace$SITENO[i])
-  print(x)
-  nwis_index <- which(annWL_df_NWIS$SITENO==x)
-  print(nwis_index)
-  annWL_df_NWIS[nwis_index,] <- nwis_replace[i,]
-}
-annWL_df_NWIS[which(annWL_df_NWIS$SITENO==403515114571701),]
-annWL_df[which(annWL_df$SITENO==403515114571701),]
-#nwis_replace[which(nwis_replace$SITENO==as.vector(annWL_df_NWIS[659,]$SITENO)),]
-#which(nwis_replace$SITENO==annWL_df_NWIS[659]$SITENO)
-
-
-#----------------------------------
-# See which NEW sites are in the 2021 CNRWA report
-# Sites that I dont already have in the trend calculations
-`%notin%` <- Negate(`%in%`)
-add_nwis <- unique(cnrwa[c(which(cnrwa$site_no %notin% annWL_df_NWIS$SITENO)),]$site_no)
-add_nwis <- add_nwis[-c(1, 3, 4, 10)]
-add_nwis
-
-nwis_new <- data.frame(SITENO = as.character(), New_Pval = as.numeric(), Old_Pval = as.numeric(),
-                           n_effective = as.numeric(), n_raw = as.numeric(), Sens_Slope = as.numeric(),
-                           MinYear = as.numeric(), MaxYear = as.numeric(), Notes = as.character())
-for(i in seq(1, length(add_nwis))){
-  site_number <- add_nwis[i]
-  cnrwa_site_data <- cnrwa[cnrwa$site_no==site_number,]
-  start.date <- "1984-01-01"
-  end.date <- "2021-12-31"
-  nwis_lvls <- readNWISgwl(add_nwis[i], startDate = start.date, endDate = end.date)
-  nwis_lvls$lev_va <- -1 * nwis_lvls$lev_va
-  append_lvls <- full_join(nwis_lvls, cnrwa_site_data, by=c("site_no" = "site_no", "lev_va" = "lvl_below_surf", 
-                                                            "lev_dt" = "DATE"))
-  annavg <- aggregate(lev_va ~ cut(lev_dt, "1 year"), append_lvls, mean)
-  annavg$YEAR <- as.numeric(substr(annavg$`cut(lev_dt, "1 year")`, 1, 4))
-  annavg <- annavg %>% dplyr::filter(YEAR >= 1984)
-  if (var(annavg$lev_va) > 0 & nrow(annavg) >= 5){
-    modMK <- data.frame(t(mmkh(annavg$lev_va)))
-    df <- data.frame(SITENO = site_number, New_Pval = modMK$new.P.value, Old_Pval = modMK$old.P.value,
-                     n_effective = modMK$N.N., n_raw = nrow(annavg[which(!is.na(annavg$lev_va)),]),
-                     Sens_Slope = modMK$Sen.s.slope, MinYear = min(annavg$YEAR), MaxYear = max(annavg$YEAR), 
-                     Notes = "USGS groundwater levels supplemented by 2021 CNRWA report data")
-  } else if (var(annavg$lev_va) == 0 & nrow(annavg) >= 5){
-    print(cat(site_number,"Only has one water level value - cannot run modified mann-kendall"))
-    df <- data.frame(SITENO = site_number, New_Pval = NA, Old_Pval = NA,
-                     n_effective = NA, n_raw = nrow(annavg[which(!is.na(annavg$lev_va)),]),
-                     Sens_Slope = 0, MinYear = min(annavg$YEAR), MaxYear = max(annavg$YEAR), 
-                     Notes = "Only one water level value; trend == 0")
-  } else {
-    print(cat(site_number,"does not have enough annual readings to calculate trend"))
-    df <- data.frame(SITENO = site_number, New_Pval = NA, Old_Pval = NA,
-                     n_effective = NA, n_raw = NA,
-                     Sens_Slope = NA, MinYear = min(annavg$YEAR), MaxYear = max(annavg$YEAR),
-                     Notes = "Not enough annual measurements")
   }
   nwis_new <- rbind(nwis_new, df)
 }
@@ -361,8 +393,13 @@ nwis_new$SITENO %in% annWL_df_NWIS$SITENO
 annWL_df_NWIS <- rbind(annWL_df_NWIS, nwis_new)
 
 #----------------------------------
-# Optional, only get points for sites with calculated statistics
+# OPTIONAL FILTER only get points for sites with calculated statistics
 #annWL_df_NWIS_stats <- annWL_df_NWIS[!is.na(annWL_df_NWIS$Sens_Slope),]
+#----------------------------------
+
+# Exporting all sites so we know more about the distribution of groundwater sites throughout Nevada
+# Helpful to know where sites exist, but they don't have enough recorded observations
+# Or the only observations are historical
 
 
 # Get sites as spatialpointsdf
@@ -371,7 +408,7 @@ site_loc1 <- readNWISsite(annWL_df_NWIS$SITENO[1:5000])
 site_loc2 <- readNWISsite(annWL_df_NWIS$SITENO[5001:10000])
 site_loc3 <- readNWISsite(annWL_df_NWIS$SITENO[10001:nrow(annWL_df_NWIS)])
 
-test <- rbind(site_loc1, site_loc2, site_loc3)
+combine_sites <- rbind(site_loc1, site_loc2, site_loc3)
 
 # # Some sites missing from NWIS database - new ones established by CNRWA?
 # which(annWL_df_NWIS$SITENO %notin% test$site_no)
@@ -403,37 +440,37 @@ test <- rbind(site_loc1, site_loc2, site_loc3)
 # plot(x, add=T, col="red")
 
 
-out_sites <- SpatialPointsDataFrame(coords = data.frame(test$dec_long_va, test$dec_lat_va),
-                                    data = test)
+out_sites <- SpatialPointsDataFrame(coords = data.frame(combine_sites$dec_long_va, combine_sites$dec_lat_va),
+                                    data = combine_sites)
 
 
-crs(out_sites) <- crs(ha)
+st_crs(out_sites) <- st_crs(ha)
 plot(ha)
 plot(out_sites, add=T, col="forestgreen")
 
 # Attribute sites with stats
 sites_out <- merge(out_sites, y = annWL_df_NWIS, by.x = "site_no", by.y = "SITENO", all.x= TRUE)
-#sites_out <- merge(nwis_sites, y = annWL_df_NWIS_stats, by.x = "site_no", by.y = "SITENO", all.x= TRUE)
 nwis_pts <- sites_out
 
 
 #---------------------------------------------------------------------
 #---------------------------------------------------------------------
+# Get NDWR data from well level (WellNet) database
+# Data were exported from the database by NDWR for TNC in September 2021
 
-# Get NDWR data from well level database
+
+# Get groundwater level data from csv
+filename <- "path_to_csv\\wellnet_gwlevels_092321.csv"
 filename <- "D:/data_temp/gde_assessment/gde_threats/wellnet_gwlevels_092321.csv"
-lines <- readLines(filename)
-lines <- gsub('([^,])"([^,])', '\\1""\\2', lines)
-data <- read.csv(textConnection(lines))
+# lines <- readLines(filename)
+# lines <- gsub('([^,])"([^,])', '\\1""\\2', lines) # Remove empty lines from csv
+# data <- read.csv(textConnection(lines))
 wellobs <- read.csv(filename)
 
-dim(wellobs)
-head(wellobs)
-
-# Unique site names
+# Make a list of unique site names
 site_names = as.vector(unique(wellobs$Site_Name))
 
-# Fix site names to remove double-space
+# Fix site names to remove double-spaces
 site_names_fix <- sub(pattern = "  ", " ", site_names)
 head(site_names_fix)
 wellobs$Site_Name_Fix <- sub("  ", " ", wellobs$Site_Name)
@@ -442,6 +479,14 @@ head(wellobs)
 site_names = as.vector(unique(wellobs$Site_Name_Fix))
 
 # Read in NDWR site locations
+gdb <- "K:\\GIS3\\Projects\\GDE\\Maps\\GDE_Threats\\GDE_Threats.gdb" # Location (geodatabase in this case) for hydrographics areas (HAs)
+fc_list <- st_layers(gdb)
+ha <- sf::st_read(gdb, layer = "hydrographic_basin_boundaries")
+ha <- sf::st_transform(ha, crs = "+proj=longlat +ellps=GRS80 +datum=NAD83 +no_defs ")
+plot(ha['HYD_AREA'])
+
+
+
 gdb <- "D:/data_temp/gde_assessment/gde_threats/gde_threats.gdb"
 subset(ogrDrivers(), grepl("GDB", name))
 fc_list <- ogrListLayers(gdb)
