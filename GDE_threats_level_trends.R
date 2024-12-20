@@ -456,15 +456,20 @@ nwis_pts <- sites_out
 #---------------------------------------------------------------------
 #---------------------------------------------------------------------
 # Get NDWR data from well level (WellNet) database
-# Data were exported from the database by NDWR for TNC in September 2021
+# Data were exported to csv files from the database by NDWR for TNC in September 2021
 
+# Teh databse is updated everyday as new data are gathered; instructions for accessing NDWR WellNet database:
+# Connect to server in ArcGIS: https://arcgis.shpo.nv.gov/arcgis/services (AddArcGIS Server Connection)
+# No authentication inputs needed
+# Export well level and site data to csvs
+
+# OR add data from feature server (may change in the future):
+# https://arcgis.water.nv.gov/arcgis/rest/services/NDWR/Monitoring_Sites_Groundwater/FeatureServer
+# Can export sites and measures (groundwater levels) from here.
 
 # Get groundwater level data from csv
 filename <- "path_to_csv\\wellnet_gwlevels_092321.csv"
-filename <- "D:/data_temp/gde_assessment/gde_threats/wellnet_gwlevels_092321.csv"
-# lines <- readLines(filename)
-# lines <- gsub('([^,])"([^,])', '\\1""\\2', lines) # Remove empty lines from csv
-# data <- read.csv(textConnection(lines))
+filename <- "C:\\Users\\sarah.byer\\Documents\\ArcGIS\\Projects\\Scratch\\ndwr_gw_measures_122024.csv"
 wellobs <- read.csv(filename)
 
 # Make a list of unique site names
@@ -478,87 +483,124 @@ head(wellobs)
 "117 S01 E35 09CC  1" %in% site_names_fix
 site_names = as.vector(unique(wellobs$Site_Name_Fix))
 
-# Read in NDWR site locations
-gdb <- "K:\\GIS3\\Projects\\GDE\\Maps\\GDE_Threats\\GDE_Threats.gdb" # Location (geodatabase in this case) for hydrographics areas (HAs)
-fc_list <- st_layers(gdb)
-ha <- sf::st_read(gdb, layer = "hydrographic_basin_boundaries")
-ha <- sf::st_transform(ha, crs = "+proj=longlat +ellps=GRS80 +datum=NAD83 +no_defs ")
-plot(ha['HYD_AREA'])
 
+#---------------------------------------------------------------------
+# Read in NDWR site locations from geodatabase, shapefile, or csv
 
+# # Geodatabase option
+# gdb <- "Path to geodatabase" # Location (geodatabase in this case) for hydrographics areas (HAs)
+# ndwr <- sf::st_read(gdb,layer="wellnet_gwsites_092321")
+# ndwr <- sf::st_transform(ndwr, crs = "+proj=longlat +ellps=GRS80 +datum=NAD83 +no_defs ")
+# plot(ndwr['Basin'])
 
-gdb <- "D:/data_temp/gde_assessment/gde_threats/gde_threats.gdb"
-subset(ogrDrivers(), grepl("GDB", name))
-fc_list <- ogrListLayers(gdb)
-ndwr <- readOGR(dsn=gdb,layer="wellnet_gwsites_092321")
+# Shapefile option
+ndwr <- st_read("path_to_file\\filename.shp")
+ndwr <- st_read("C:\\Users\\sarah.byer\\Documents\\ArcGIS\\Projects\\Scratch\\ndwr_gw_sites_122024.shp")
+ndwr <- sf::st_transform(ndwr, crs = "+proj=longlat +ellps=GRS80 +datum=NAD83 +no_defs ")
+plot(ndwr['Basin'])
+
 # Fix site name again - remove double space
 ndwr$Site_Name_Fix <- sub(pattern = "  ", " ", ndwr$Site_Name)
 head(ndwr)
 
-annWL <- function(site_name){
+# Annual water level function for NDWR data
+annWL_ndwr <- function(site_name){
+  # Filter full list of groundwater measurements by site name
   x <- wellobs[wellobs$Site_Name_Fix==site_name,]
+  
+  # Format Date field; need year in its own column at least
+  just_dates <- as.Date(as.character(x$Measure_date), "%m/%d/%Y")
+  x$Date_char <- just_dates
+  x <- x %>% mutate(DATE = as.Date(Date_char, format = "%m/%d/%Y"))
+  x$YEAR <- as.numeric(format(as.Date(x$DATE), "%Y"))
+  
+  # Check if there are valid measurements (> 1 measurement and not just NA values)
   if (nrow(x) < 1){
-    print(cat(site_name,"does not have enough annual readings to calculate trend"))
-    df <- data.frame(SITENO = site_name, New_Pval = NA, Old_Pval = NA,
+    print(paste(site_name,"does not have enough annual readings to calculate trend"))
+    site_df <- data.frame(SITENO = site_name, New_Pval = NA, Old_Pval = NA,
                      n_effective = NA, n_raw = NA,
                      Sens_Slope = NA, MinYear = NA, MaxYear = NA,
                      Notes = "Not enough annual measurements")
-  } #else if (is.na(sum(x$Water_Level) == TRUE)){
-  else if ((sum(is.na(x$Water_Level)) == length(x$Water_Level))) {
-    print(cat(site_name,"only has NULL readings"))
-    df <- data.frame(SITENO = site_name, New_Pval = NA, Old_Pval = NA,
+  } else if ((sum(is.na(x$Water_Level)) == length(x$Water_Level))) {
+    print(paste(site_name,"only has NULL readings"))
+    site_df <- data.frame(SITENO = site_name, New_Pval = NA, Old_Pval = NA,
                      n_effective = NA, n_raw = NA,
-                     Sens_Slope = NA, MinYear = min(annavg$YEAR), MaxYear = max(annavg$YEAR),
+                     Sens_Slope = NA, MinYear = min(x$YEAR), MaxYear = max(x$YEAR),
                      Notes = "Only NULL measurement values")
   }
   else {
-    print(cat(site_name,"gets a trend calculation..."))
+    print(paste(site_name,"gets a trend calculation..."))
     #just_dates <- unlist(strsplit(as.character(x$Measure_date), "[ ]"))
     #x$Date_char <- just_dates[-grep(":", just_dates)] # Removes time stamps
     ##x$Date_char <- just_dates[!just_dates == "0:00:00"]
-    just_dates <- as.Date(as.character(x$Measure_date), "%m/%d/%Y")
-    x$Date_char <- just_dates
-    x <- x %>% mutate(DATE = as.Date(Date_char, format = "%m/%d/%Y"))
-    annavg <- aggregate(Water_Level ~ cut(DATE, "1 year"), x, mean)
-    annavg$YEAR <- as.numeric(substr(annavg$`cut(DATE, "1 year")`, 1, 4))
+    # just_dates <- as.Date(as.character(x$Measure_date), "%m/%d/%Y")
+    # x$Date_char <- just_dates
+    # x <- x %>% mutate(DATE = as.Date(Date_char, format = "%m/%d/%Y"))
+    annavg <- aggregate(Water_Level ~ cut(DATE, "1 year"), x, mean) # Summarize mean value across  calendar year
+    # annavg$YEAR <- as.numeric(substr(annavg$`cut(DATE, "1 year")`, 1, 4))
     if (var(annavg$Water_Level) > 0 & nrow(annavg) >= 5){
       modMK <- data.frame(t(mmkh(annavg$Water_Level)))
-      df <- data.frame(SITENO = site_name, New_Pval = modMK$new.P.value, Old_Pval = modMK$old.P.value,
+      site_df <- data.frame(SITENO = site_name, New_Pval = modMK$new.P.value, Old_Pval = modMK$old.P.value,
                        n_effective = modMK$N.N., n_raw = nrow(annavg[which(!is.na(annavg$lev_va)),]),
                        Sens_Slope = modMK$Sen.s.slope, MinYear = min(annavg$YEAR), MaxYear = max(annavg$YEAR), Notes = NA)
     } else if (var(annavg$Water_Level) == 0 & nrow(annavg) >= 5){
-      print(cat(site_name,"Only has one water level value - cannot run modified mann-kendall"))
-      df <- data.frame(SITENO = site_name, New_Pval = NA, Old_Pval = NA,
+      print(paste(site_name,"Only has one water level value - cannot run modified mann-kendall"))
+      site_df <- data.frame(SITENO = site_name, New_Pval = NA, Old_Pval = NA,
                        n_effective = NA, n_raw = nrow(annavg[which(!is.na(annavg$Water_Level)),]),
                        Sens_Slope = 0, MinYear = min(annavg$YEAR), MaxYear = max(annavg$YEAR), 
                        Notes = "Only one water level value; trend == 0")
     } 
     else {
-      print(cat(site_name,"does not have enough annual readings to calculate trend"))
-      df <- data.frame(SITENO = site_name, New_Pval = NA, Old_Pval = NA,
+      print(paste(site_name,"does not have enough annual readings to calculate trend"))
+      site_df <- data.frame(SITENO = site_name, New_Pval = NA, Old_Pval = NA,
                        n_effective = NA, n_raw = NA,
                        Sens_Slope = NA, MinYear = min(annavg$YEAR), MaxYear = max(annavg$YEAR),
                        Notes = "Not enough annual measurements")
     }
-    return(df)}
+    return(site_df)}
 }
-test <- annWL(site_name = "137B N09 E43 03AAAD1")
-test <- annWL(site_name = "143 S02 E40 10CC  1")
+
+# test the function on some sites
+test <- annWL_ndwr(site_name = "137B N09 E43 03AAAD1") # Trend gets calculated
+test <- annWL_ndwr(site_name = "143 S02 E40 10CC  1") # Trend gets calculated
+print(test)
+
+
+
+# Testing on problem sites...
+#site_name <- "021 N33 E22 36ACBC1"
+site_name <- "001 N47 E30 04BA" # This one should work
+site_name <- "227A S12 E50 33A  1"
+x <- wellobs[wellobs$Site_Name_Fix==site_name,]
+print(x)
+annWL_ndwr(x$Site_Name)
+
+# Format Date field
+just_dates <- as.Date(as.character(x$Measure_date), "%m/%d/%Y")
+x$Date_char <- just_dates
+
+x <- x %>% mutate(DATE = as.Date(Date_char, format = "%m/%d/%Y"))
+#annavg <- aggregate(Water_Level ~ cut(DATE, "1 year"), x, mean)
+x$YEAR <- as.numeric(substr(x$`cut(DATE, "1 year")`, 1, 4))
 
 
 #----------------------------------
 # Calculate trends and format data
 
+# Create empty dataframe to populate with trend data
 annWL_df_NDWR <- data.frame(SITENO = as.character(), New_Pval = as.numeric(), Old_Pval = as.numeric(),
                        n_effective = as.numeric(), n_raw = as.numeric(), Sens_Slope = as.numeric(),
                        MinYear = as.numeric(), MaxYear = as.numeric(), Notes = as.character())
 site_names <- sort(site_names)
 
+# Loop through sites and apply annWL function
 for (i in seq(1, length(site_names))){
   sitename <- site_names[i]
-  tss_df <- annWL(site_name = sitename)
+  tss_df <- annWL_ndwr(site_name = sitename)
   annWL_df_NDWR <- rbind(annWL_df_NDWR, tss_df)
 }
+
+head(annWL_df_NDWR, 10)
 
 #----------------------------------
 # Append CNRWA data to NDWR sites
