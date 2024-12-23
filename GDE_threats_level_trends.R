@@ -443,7 +443,6 @@ combine_sites <- rbind(site_loc1, site_loc2, site_loc3)
 out_sites <- SpatialPointsDataFrame(coords = data.frame(combine_sites$dec_long_va, combine_sites$dec_lat_va),
                                     data = combine_sites)
 
-
 st_crs(out_sites) <- st_crs(ha)
 plot(ha)
 plot(out_sites, add=T, col="forestgreen")
@@ -586,41 +585,51 @@ for (i in seq(1, length(site_names))){
 head(annWL_df_NDWR, 10)
 
 #----------------------------------
-# Append CNRWA data to NDWR sites
-# Central NV Regional Water Authority has additional data not-yet integrated in NWIS
-cnrwa <- read.csv("E:\\RCF Data Recovery\\Recovered Files\\P00\\GDE_Threats\\Hydrology\\cnrwa_add_wells.csv")
-head(cnrwa)
-unique(cnrwa$site_no)
-cnrwa <- cnrwa %>% mutate(DATE = as.Date(Date, format = "%m/%d/%Y"))
+# Append CNRWA data to NWIS sites
+# Central NV Regional Water Authority has additional data not-yet integrated in WellNet
+cnrwa <- read.csv("path_to_csv\\cnrwa_add_well.csv")
+cnrwa <- read.csv("K:\\GIS3\\Projects\\GDE\\Tables\\cnrwa_add_wells.csv")
+cnrwa <- cnrwa %>% dplyr::mutate(DATE_FORMAT = as.Date(Date, format = "%m/%d/%Y"))
 cnrwa$YEAR <- as.numeric(substr(cnrwa$DATE, 1, 4)) 
 head(cnrwa)
 
 # See which sites have additional data from the 2021 CNRWA report
-# Sites that already exist in the trend calculations
+# Sites that already exist in the NDWR trend calculations would have a value in the 'ndwr_site' column
 # Calculate new trend with additional data and REPLACE
-check_ndwr <- as.vector(unique(cnrwa[which(cnrwa$ndwr_site %in% annWL_df_NDWR$SITENO),]$ndwr_site))
-check_ndwr %in% annWL_df_NDWR$SITENO
-check_ndwr <- check_ndwr[-c(which(check_ndwr == ""))]
-check_ndwr
+print(unique(cnrwa$ndwr_site))
+cnrwa_ndwr <- cnrwa %>% filter(ndwr_site != "") # Remove "blank" ndwr site names from cnrwa dataframe
+check_sites <- unique(cnrwa_ndwr[which(cnrwa_ndwr$ndwr_site %in% annWL_df_NDWR$SITENO),]$ndwr_site) # Which sites need to be checked 
+print(check_sites)
 
+# Subset NDWR dataframe to the sites that need CNRWA data
+check_ndwr <- annWL_df_NDWR %>% filter(SITENO %in% check_sites)
+head(check_ndwr)
 
 new_trend2 <- function(site_name){
+  # Subset site information from NDWR and CNRWA dataframes
   og_site_trend <- annWL_df_NDWR[annWL_df_NDWR$SITENO==site_name,]
-  cnrwa_site_data <- cnrwa[cnrwa$ndwr_site==site_name,]
+  cnrwa_site_data <- cnrwa_ndwr[cnrwa_ndwr$ndwr_site==site_name,]
   cnrwa_site_data$lvl_below_surf <- -1 * cnrwa_site_data$lvl_below_surf
-  #print(og_site_trend$MaxYear)
-  #print(max(cnrwa_site_data$YEAR))
+  cnrwa_site_data$YEAR <- as.numeric(format(as.Date(cnrwa_site_data$DATE_FORMAT), "%Y"))
+  print(og_site_trend$MaxYear)
+  print(max(cnrwa_site_data$YEAR))
+  # If CNRWA has more recent data than NDWR; append CNRWA data to the record of observations and recalculate the trend
+  # Note that CNRWA data may have more recent observations, but values may be NA
+  # i.e. if a well was dry when they visited, there would be no data, but the recorded year may still be later than NDWR
   if (og_site_trend$MaxYear < max(cnrwa_site_data$YEAR)){
     print(paste("Re-calculate and replace site trend", site_name, sep=": "))
-    ndwr_lvls <- wellobs[wellobs$Site_Name_Fix==site_name,]
-    just_dates <- as.Date(as.character(ndwr_lvls$Measure_date), "%m/%d/%Y")
+    ndwr_lvls <- wellobs[wellobs$Site_Name_Fix==site_name,] # Subset NDWR data
+    just_dates <- as.Date(as.character(ndwr_lvls$Measure_date), "%m/%d/%Y") # formatted date
     ndwr_lvls$Date_char <- just_dates
     ndwr_lvls <- ndwr_lvls %>% mutate(DATE = as.Date(Date_char, format = "%m/%d/%Y"))
+    ndwr_lvls$YEAR <- as.numeric(format(as.Date(ndwr_lvls$DATE), "%Y"))
+    # Join CNRWA observations to NDWR observations
     append_lvls <- full_join(ndwr_lvls, cnrwa_site_data, by=c("Site_Name" = "site_no",
                                                               "Water_Level" = "lvl_below_surf", 
-                                                              "DATE" = "DATE"))
+                                                              "DATE" = "DATE_FORMAT"))
     annavg <- aggregate(Water_Level ~ cut(DATE, "1 year"), append_lvls, mean)
-    annavg$YEAR <- as.numeric(substr(annavg$`cut(DATE, "1 year")`, 1, 4))
+    colnames(annavg)[1] <- 'DATE'
+    annavg$YEAR <- as.numeric(format(as.Date(annavg$DATE), "%Y"))
     if (var(annavg$Water_Level) > 0 & nrow(annavg) >= 5){
       modMK <- data.frame(t(mmkh(annavg$Water_Level)))
       df <- data.frame(SITENO = site_name, New_Pval = modMK$new.P.value, Old_Pval = modMK$old.P.value,
@@ -639,16 +648,20 @@ new_trend2 <- function(site_name){
   }     
 }
 
+# Empty dataframe to replace with (potentially new) trend statistics for the sites
 ndwr_replace <- data.frame(SITENO = as.character(), New_Pval = as.numeric(), Old_Pval = as.numeric(),
                            n_effective = as.numeric(), n_raw = as.numeric(), Sens_Slope = as.numeric(),
                            MinYear = as.numeric(), MaxYear = as.numeric(), Notes = as.character())
-for(i in seq(1, length(check_ndwr))){
-  s <- check_ndwr[i]
-  x <- new_trend2(s)
+
+# Run function that calculates a new trend for selected sites
+for(site_name in check_sites){
+  print(site_name)
+  x <- new_trend2(site_name)
   ndwr_replace <- rbind(ndwr_replace, x)
 }
-ndwr_replace
+print(ndwr_replace)
 
+# Replace trend statistics for selected sites in large NDWR dataframe
 for(i in seq(1, nrow(ndwr_replace))){
   x <- as.vector(ndwr_replace$SITENO[i])
   print(x)
@@ -656,39 +669,26 @@ for(i in seq(1, nrow(ndwr_replace))){
   print(ndwr_index)
   annWL_df_NDWR[ndwr_index,] <- ndwr_replace[i,]
 }
-annWL_df_NDWR[4436,]
+print(annWL_df_NDWR[4210,])
 
 
 #----------------------------------
-# Get sites as spatialpoints df
+# Assign trend data to sites spatial (sf) object
 head(annWL_df_NDWR)
+
+# We're grabbing all sites so we can visualize where we do/don't have enough measurements for trend data
+# Here, option to only grab sites that had slope stats calculated above
 #sites_with_stats <- annWL_df_NDWR[!is.na(annWL_df_NDWR$Sens_Slope),] # Only grab sites that had slope stats calculated above
 #ndwr_stats <- ndwr[ndwr$Site_Name_Fix %in% sites_with_stats$SITENO,] # Get spatial points df of those sites with stats
 
+# Combine NDWR sf object with calculated trend statistics
 sites_out <- merge(ndwr, y = annWL_df_NDWR, by.x = "Site_Name_Fix", by.y = "SITENO", all.x= TRUE)
-sites_out
-sites_out[sites_out$Site_Name_Fix=="209 S04 E61 28CD  1",]@data
-crs(sites_out)
-sites_out
-ctz_data <- sites_out[5324,] # New site at Cortex gold mine - only 1 year of data
-sites_out <- sites_out[-c(5324),]
+print(sites_out[sites_out$Site_Name_Fix=="209 S04 E61 28CD  1",]) # Print a site with trend data joined to it
+print(crs(sites_out)) # Print CRS
 
-#ndwr_pts <- spTransform(sites_out, CRS("+proj=longlat +ellps=GRS80 +datum=NAD83 +no_defs"))
-ndwr_pts <- spTransform(sites_out, CRS("+proj=longlat +datum=NAD83 +no_defs"))
-plot(ndwr_pts, add=TRUE, col="purple")
-
-
-ctz <- ndwr[ndwr$Site_Name_Fix=="054 N27 E47 08BBDA2",]@data
-ctz_sp <- SpatialPointsDataFrame(coords = data.frame(-1*ctz$Lon_DD_NAD83, ctz$Lat_DD_NAD83), 
-                                 proj4string = CRS("+proj=longlat +datum=NAD83 +no_defs"),
-                                 data = ctz)
-ctz_full <- merge(ctz_sp, ctz_data, by.x='Site_Name_Fix', by.y='Site_Name_Fix', all.y=TRUE)
-plot(ctz_full, add=T, col="blue")
-ctz_full@data
-ctz_full <- ctz_full[,-(25:26)]
-
-ndwr_pts_all <- rbind(ndwr_pts, ctz_full)
-ndwr_pts <- ndwr_pts_all
+# Check that data plot correctly and have trend statistics associated with them
+ndwr_pts <- sf::st_transform(sites_out, crs = "+proj=longlat +datum=NAD83 +no_defs")
+plot(ndwr_pts['Sens_Slope']) # Plot sens slope value
 
 #---------------------------------------------------------------------
 #---------------------------------------------------------------------
