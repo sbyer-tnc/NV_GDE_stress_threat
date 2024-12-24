@@ -1,26 +1,20 @@
-# Groundwater level data
-# Consolidate data from NWIS and NDWR sites to calculate a trend in groundwater level for each site
+# Groundwater level data for calculating trends for estimating stressors/threats to Groundwater Dependent Ecosystems
+# Consolidates data from NWIS and NDWR sites to calculate a trend in groundwater level for each site
 # Calculate trends using modified mann-kendall package
 #
+# Sections:
+# 1. USGS (NWIS) data
+# 2. NDWR (WellNet) data
+# 3. Combine and output data
 #---------------------------------------------------------------------
 # Load packages
 
-#library(rgdal)
-#library(sp)
-#library(raster)
-#library(readOGR)
 library(sf)
 library(sp)
 library(terra)
 library(mblm)
 library(modifiedmk)
 library(dplyr)
-
-
-#library(rgeos)
-#library(tidyverse)
-#library(dplyr)
-#library(ggplot2)
 
 # USGS-derived packages to retrieve data in R
 # https://owi.usgs.gov/R/dataRetrieval.html#1 (tutorial)
@@ -31,8 +25,9 @@ library(dataRetrieval)
 
 #---------------------------------------------------------------------
 #---------------------------------------------------------------------
+### Section 1 ###
 
-# custom function for filtering USGS data for sites that meet data criteria (see below) and calculate trend over time
+# Custom function for filtering USGS data for sites that meet data criteria (see below) and calculate trend over time
 # Function has a couple of checks to ensure valid data are included
 # Returns a dataframe for the groundwater site with trend statistics (p-value, sens-slope, min year, max yea, etc.) 
 
@@ -103,7 +98,7 @@ annWL <- function(gw_observations, site_number){
 # Could use other polygons (i.e. WBDs aka HUCs)
 gdb <- "K:\\GIS3\\Projects\\GDE\\Maps\\GDE_Threats\\GDE_Threats.gdb" # Location (geodatabase in this case) for hydrographics areas (HAs)
 fc_list <- st_layers(gdb)
-ha <- sf::st_read(gdb, layer = "hydrographic_basin_boundaries")
+ha <- sf::st_read(gdb, layer = "hydrographic_basin_boundarie")
 ha <- sf::st_transform(ha, crs = "+proj=longlat +ellps=GRS80 +datum=NAD83 +no_defs ")
 plot(ha['HYD_AREA'])
 
@@ -123,17 +118,19 @@ annWL_df <- data.frame(SITENO = as.character(), New_Pval = as.numeric(), Old_Pva
                        n_effective = as.numeric(), n_raw = as.numeric(), Sens_Slope = as.numeric(),
                        MinYear = as.numeric(), MaxYear = as.numeric(), Notes = as.character())
 
-
-# # pick up here; this one should work (has plenty of valid obsevations)
-# ha_full <- ha
-# ha <- ha_full %>% dplyr::filter(HYD_AREA %in% c(198, 199, 115, 108))
-# plot(ha['HYD_AREA'])
-# annWL(gw_observations, site_number = "390225119100801")
+#######
+# NOTE! 
+# Request for data may fail if list of records exceeds the maximum length
+# readNWISgwl() may return an error like "HTTP Status 400 - Input list size exceeded [keyword=[site], max-list-size=[35000]]"
+# In this case, the for loop will stop. Save the existing dataframe to a new variable name
+# and run the loop starting from that Hydrographic Area
+# Ex. Running through all HAs, the loop may stop at Amargosa Valley (HA 230) which has a lot of observations AND wells
+#######
 
 # Use for-loop and annWL() to populate empty data frame with trend stats
-for (j in seq(1, nrow(ha))){
+for (j in seq(207, nrow(ha))){
   # Get sites for one basin
-  poly <- ha[j,]
+  poly <- st_make_valid(ha[j,])
   print(paste(poly$HYD_AREA, ": ", poly$HYD_AREA_N, sep=""))
   
   # Create bounding box for the HA to get sites
@@ -154,7 +151,7 @@ for (j in seq(1, nrow(ha))){
   
   # If HA has valid sites, get location data and convert sites to spatialpointsdataframe
   else{
-    ha_sites <- as.numeric(ha_gw$site_no)
+    ha_sites <- unique(as.numeric(ha_gw$site_no))
     ha_sites_loc <- readNWISsite(ha_sites) # Get location data for sites
     ha_points <- sp::SpatialPointsDataFrame(coords = data.frame(ha_sites_loc$dec_long_va, ha_sites_loc$dec_lat_va),
                                             data = ha_sites_loc) # Convert to spatialpointsdataframe
@@ -211,8 +208,15 @@ for (j in seq(1, nrow(ha))){
 }
 
 # Define dataframe of annual water levels for NWIS groundwater sites
+# Loop run twice
+# annWL_df_part1 <- annWL_df
+# annWL_df_part2 <- annWL_df
+# annWL_df_NWIS <- rbind(annWL_df_part1, annWL_df_part2)
+
+# Loop run once
 annWL_df_NWIS <- annWL_df
 head(annWL_df_NWIS)
+
 
 # Remove sites where siteid is BAD
 # ex. nchar(as.character(annWL_df_NWIS$SITENO[5611]))
@@ -229,8 +233,9 @@ annWL_df_NWIS <- annWL_df_NWIS[-c(rem_index),] # Remove bad site numbers from df
 # Remove a couple additional sites
 rem_sites <- c(364640114050301, 364727114045601) # These sites have 2 entries each - remove one at least
 annWL_df_NWIS[which(annWL_df_NWIS$SITENO %in% rem_sites),]
-annWL_df_NWIS[c(12173, 12181),]
-annWL_df_NWIS <- annWL_df_NWIS[-c(12173, 12181),]
+rem_site_index <- c(which(annWL_df_NWIS$SITENO %in% rem_sites))
+rem_site_index[c(1,3)]
+annWL_df_NWIS <- annWL_df_NWIS[-rem_site_index[c(1,3)],]
 dim(annWL_df_NWIS)
 
 
@@ -250,6 +255,7 @@ head(cnrwa)
 # See which sites have additional data from the 2021 CNRWA report
 # Sites that already exist in the trend calculations
 # Calculate new trend with additional data and REPLACE
+check_sites <- which(cnrwa$site_no %in% annWL_df_NWIS$SITENO)
 check_nwis <- as.vector(unique(cnrwa[which(cnrwa$site_no %in% annWL_df_NWIS$SITENO),]$site_no))
 check_nwis
 
@@ -323,6 +329,7 @@ for(i in seq(1, length(check_nwis))){
 }
 nwis_replace
 
+
 # Replace values in NWIS dataframe with new, recalculated values
 for(i in seq(1, nrow(nwis_replace))){
   x <- as.vector(nwis_replace$SITENO[i])
@@ -335,8 +342,6 @@ for(i in seq(1, nrow(nwis_replace))){
 # Checking some individual sites
 annWL_df_NWIS[which(annWL_df_NWIS$SITENO==403515114571701),]
 annWL_df[which(annWL_df$SITENO==403515114571701),]
-#nwis_replace[which(nwis_replace$SITENO==as.vector(annWL_df_NWIS[659,]$SITENO)),]
-#which(nwis_replace$SITENO==annWL_df_NWIS[659]$SITENO)
 
 
 #----------------------------------
@@ -345,8 +350,9 @@ annWL_df[which(annWL_df$SITENO==403515114571701),]
 `%notin%` <- Negate(`%in%`)
 add_nwis <- unique(cnrwa[c(which(cnrwa$site_no %notin% annWL_df_NWIS$SITENO)),]$site_no)
 print(add_nwis)
-add_nwis <- add_nwis[-c(1, 3, 4, 10)] # Remove sites that would not be part of NWIS (incorrect site number scheme)
-add_nwis
+numbers_only <- function(x) !grepl("\\D", x)
+add_nwis <- add_nwis[numbers_only(add_nwis)] # Remove sites that would not be part of NWIS (incorrect site number scheme)
+print(add_nwis)
 
 nwis_new <- data.frame(SITENO = as.character(), New_Pval = as.numeric(), Old_Pval = as.numeric(),
                            n_effective = as.numeric(), n_raw = as.numeric(), Sens_Slope = as.numeric(),
@@ -404,60 +410,35 @@ annWL_df_NWIS <- rbind(annWL_df_NWIS, nwis_new)
 
 # Get sites as spatialpointsdf
 # Use for-loop - too many to call all at once
-site_loc1 <- readNWISsite(annWL_df_NWIS$SITENO[1:5000])
-site_loc2 <- readNWISsite(annWL_df_NWIS$SITENO[5001:10000])
-site_loc3 <- readNWISsite(annWL_df_NWIS$SITENO[10001:nrow(annWL_df_NWIS)])
-
+site_loc1 <- readNWISsite(annWL_df_NWIS$SITENO[1:2000])
+site_loc2 <- readNWISsite(annWL_df_NWIS$SITENO[2001:4000])
+site_loc3 <- readNWISsite(annWL_df_NWIS$SITENO[4001:nrow(annWL_df_NWIS)])
 combine_sites <- rbind(site_loc1, site_loc2, site_loc3)
 
-# # Some sites missing from NWIS database - new ones established by CNRWA?
-# which(annWL_df_NWIS$SITENO %notin% test$site_no)
-# annWL_df_NWIS[c(12382, 12383, 12384,12385),]
-# 
-# # Create spdf for these points
-# cn_data <- annWL_df_NWIS[c(12382, 12383, 12384,12385),]
-# readNWISsite(cn_data$SITENO)
-# cn_data$NDWR_Sttn_Nm <- c("078 N27 E27 13AADD1", "178A N30 E63 31BAAA1    ITCAINA WELL",
-#                           "174 N14 E60 04DBD 1", "143 S02 E40 10CC 1")
-# cn_pts <- data.frame(SITENO = as.character(c(40125111832701, 40262511453001, 390612115134801, 374633117320201)),
-#                      lat_va = c(401250.5, 402632.7, 390611.8, 374653.7),
-#                      long_va = c(1185326.7, 1145441.7, 1151348.4, 1173202.0))
-# 
-# 
-# cn_pts <- merge(cn_pts, cn_data, by.x='SITENO', by.y='SITENO')
-# cn_pts
-# 
-# 
-# cn_sp <- SpatialPointsDataFrame(coords = data.frame(cn_pts$long_va, cn_pts$lat_va),
-#                                     data = cn_pts)
-# crs(cn_sp) = crs('+proj=utm +zone=11 +datum=NAD83 +units=m +no_defs')
-# # Somethings up with the ymin/amax (latitude)
-# 
-# #x <- spTransform(cn_sp, "+proj=longlat +datum=WGS84")
-# x <- spTransform(cn_sp, CRS("+proj=longlat +ellps=GRS80 +datum=NAD83 +no_defs"))
-# lonlat <- geom(x)[, c("x", "y")]
-# head(lonlat, 3)
-# plot(x, add=T, col="red")
+# Check that all rows from the trend dataframe (annWL_df_NWIS) have a geography (combine_sites) 
+annWL_df_NWIS$SITENO %notin% combine_sites$site_no
 
-
-out_sites <- SpatialPointsDataFrame(coords = data.frame(combine_sites$dec_long_va, combine_sites$dec_lat_va),
+# Create sf object from combined sites 
+out_points <- sp::SpatialPointsDataFrame(coords = data.frame(combine_sites$dec_long_va, combine_sites$dec_lat_va),
                                     data = combine_sites)
-
+out_sites <- st_as_sf(out_points) 
 st_crs(out_sites) <- st_crs(ha)
-plot(ha)
-plot(out_sites, add=T, col="forestgreen")
+plot(out_sites['county_cd'])
 
 # Attribute sites with stats
 sites_out <- merge(out_sites, y = annWL_df_NWIS, by.x = "site_no", by.y = "SITENO", all.x= TRUE)
+print(colnames(sites_out))
 nwis_pts <- sites_out
-
+plot(nwis_pts['Sens_Slope'])
 
 #---------------------------------------------------------------------
 #---------------------------------------------------------------------
+### Section 2 ###
+
 # Get NDWR data from well level (WellNet) database
 # Data were exported to csv files from the database by NDWR for TNC in September 2021
 
-# Teh databse is updated everyday as new data are gathered; instructions for accessing NDWR WellNet database:
+# The databse is updated everyday as new data are gathered; instructions for accessing NDWR WellNet database:
 # Connect to server in ArcGIS: https://arcgis.shpo.nv.gov/arcgis/services (AddArcGIS Server Connection)
 # No authentication inputs needed
 # Export well level and site data to csvs
@@ -692,13 +673,14 @@ plot(ndwr_pts['Sens_Slope']) # Plot sens slope value
 
 #---------------------------------------------------------------------
 #---------------------------------------------------------------------
+### Section 3 ###
 
 # Combine NDWR and NWIS site data
 ndwr <- ndwr_pts
 nwis <- nwis_pts
 
 # Remove duplicate sites -
-# Some NWIS sites already in NDWR Wellnet database - going to remove these from NWIS before combining
+# Some NWIS sites are already in NDWR Wellnet database - going to remove these from NWIS before combining
 # Create new columns with no whitespace in NDWR site names
 ndwr$sttn_nm2 <- gsub(" ", "", ndwr$Site_Name_Fix, fixed=TRUE)
 nwis$sttn_nm2 <- gsub(" ", "", nwis$station_nm, fixed=TRUE)
