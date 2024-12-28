@@ -15,6 +15,7 @@ library(terra)
 library(mblm)
 library(modifiedmk)
 library(dplyr)
+`%notin%` <- Negate(`%in%`) # Custom 'not in' function
 
 # USGS-derived packages to retrieve data in R
 # https://owi.usgs.gov/R/dataRetrieval.html#1 (tutorial)
@@ -127,8 +128,15 @@ annWL_df <- data.frame(SITENO = as.character(), New_Pval = as.numeric(), Old_Pva
 # Ex. Running through all HAs, the loop may stop at Amargosa Valley (HA 230) which has a lot of observations AND wells
 #######
 
+print(ha$HYD_AREA)
+ha_sub <- ha %>% filter(HYD_AREA %in% c('042', '039', '040', '041', '038', '043', '044', '045',
+                                        '050', '049', '048', '047', '046', '037', '036', '035',
+                                        '034', '033', '051', '052', '053', '054', '055', '056'))
+plot(ha_sub['HYD_AREA_N'])
+ha <- ha_sub
+
 # Use for-loop and annWL() to populate empty data frame with trend stats
-for (j in seq(207, nrow(ha))){
+for (j in seq(1, nrow(ha))){
   # Get sites for one basin
   poly <- st_make_valid(ha[j,])
   print(paste(poly$HYD_AREA, ": ", poly$HYD_AREA_N, sep=""))
@@ -216,7 +224,7 @@ for (j in seq(207, nrow(ha))){
 # Loop run once
 annWL_df_NWIS <- annWL_df
 head(annWL_df_NWIS)
-
+print(annWL_df_NWIS %>% filter(!is.na(Sens_Slope)))
 
 # Remove sites where siteid is BAD
 # ex. nchar(as.character(annWL_df_NWIS$SITENO[5611]))
@@ -347,7 +355,6 @@ annWL_df[which(annWL_df$SITENO==403515114571701),]
 #----------------------------------
 # See which NEW sites are in the 2021 CNRWA report
 # Sites that I dont already have in the trend calculations
-`%notin%` <- Negate(`%in%`)
 add_nwis <- unique(cnrwa[c(which(cnrwa$site_no %notin% annWL_df_NWIS$SITENO)),]$site_no)
 print(add_nwis)
 numbers_only <- function(x) !grepl("\\D", x)
@@ -431,6 +438,13 @@ print(colnames(sites_out))
 nwis_pts <- sites_out
 plot(nwis_pts['Sens_Slope'])
 
+
+## OPTION TO OUTPUT NOW
+# Write to point shapefile
+#st_write(nwis_pts, "file_location/nwis_gw_trends.shp")
+st_write(nwis_pts, "C:/Users/sarah.byer/nwis_gw_trends.shp")
+
+
 #---------------------------------------------------------------------
 #---------------------------------------------------------------------
 ### Section 2 ###
@@ -445,16 +459,16 @@ plot(nwis_pts['Sens_Slope'])
 
 # OR add data from feature server (may change in the future):
 # https://arcgis.water.nv.gov/arcgis/rest/services/NDWR/Monitoring_Sites_Groundwater/FeatureServer
-# Can export sites and measures (groundwater levels) from here.
+# Can export sites and measures (groundwater levels) from here to csv files.
 
 # Get groundwater level data from csv
 filename <- "path_to_csv\\wellnet_gwlevels_092321.csv"
-filename <- "C:\\Users\\sarah.byer\\Documents\\ArcGIS\\Projects\\Scratch\\ndwr_gw_measures_122024.csv"
+#filename <- "C:\\Users\\sarah.byer\\Documents\\ArcGIS\\Projects\\Scratch\\ndwr_gw_measures_122024.csv"
+filename <- "C:\\Users\\sarah.byer\\Documents\\ndwr_gw_measures_122824.csv"
 wellobs <- read.csv(filename)
 
 # Make a list of unique site names
 site_names = as.vector(unique(wellobs$Site_Name))
-
 # Fix site names to remove double-spaces
 site_names_fix <- sub(pattern = "  ", " ", site_names)
 head(site_names_fix)
@@ -476,6 +490,7 @@ site_names = as.vector(unique(wellobs$Site_Name_Fix))
 # Shapefile option
 ndwr <- st_read("path_to_file\\filename.shp")
 ndwr <- st_read("C:\\Users\\sarah.byer\\Documents\\ArcGIS\\Projects\\Scratch\\ndwr_gw_sites_122024.shp")
+ndwr <- st_read("C:\\Users\\sarah.byer\\Documents\\ndwr_gw_sites_122824.shp")
 ndwr <- sf::st_transform(ndwr, crs = "+proj=longlat +ellps=GRS80 +datum=NAD83 +no_defs ")
 plot(ndwr['Basin'])
 
@@ -671,13 +686,25 @@ print(crs(sites_out)) # Print CRS
 ndwr_pts <- sf::st_transform(sites_out, crs = "+proj=longlat +datum=NAD83 +no_defs")
 plot(ndwr_pts['Sens_Slope']) # Plot sens slope value
 
+## OPTION TO OUTPUT NOW
+# Write to point shapefile
+#st_write(ndwr_pts, "file_location/ndwr_gw_trends.shp")
+st_write(ndwr_pts, "C:/Users/sarah.byer/ndwr_gw_trends.shp")
+
 #---------------------------------------------------------------------
 #---------------------------------------------------------------------
 ### Section 3 ###
 
-# Combine NDWR and NWIS site data
+# Combine NDWR and NWIS site data from above
 ndwr <- ndwr_pts
 nwis <- nwis_pts
+
+# # Option to read in data if outputted separately for NWIS and NDWR
+# ndwr <- st_read("C:/Users/sarah.byer/ndwr_gw_trends.shp")
+# nwis <- st_read("C:/Users/sarah.byer/nwis_gw_trends.shp")
+
+## NOTE ##
+# If reading from previously-written outside file (i.e. shapefile), check field names as these may have been abbreviated
 
 # Remove duplicate sites -
 # Some NWIS sites are already in NDWR Wellnet database - going to remove these from NWIS before combining
@@ -688,10 +715,14 @@ nwis$sttn_nm2 <- gsub(" ", "", nwis$station_nm, fixed=TRUE)
 dupes <- ndwr[which(ndwr$sttn_nm2 %in% nwis$sttn_nm2),]
 plot(dupes, add=T, col="orange")
 
-test <- nwis[grep(dupes$sttn_nm2[5], nwis$sttn_nm2, ignore.case=TRUE),]
-x <- ndwr[ndwr$sttn_nm2 == test$sttn_nm2,]@data # NDWR has more data for this well
-y <- nwis[nwis$sttn_nm2 == test$sttn_nm2,]@data # NWIS record should be scrapped
+# # OPTIONAL - Explore a single site (compare observations between NWIS and NDWR)
+# test <- nwis[grep(dupes$sttn_nm2[5], nwis$sttn_nm2, ignore.case=TRUE),]
+# x <- ndwr[ndwr$sttn_nm2 == test$sttn_nm2,] # NDWR has more data for this well
+# print(x)
+# y <- nwis[nwis$sttn_nm2 == test$sttn_nm2,] # NWIS record should be scrapped
+# print(y)
 
+# Get the Site IDs for sites that should be removed from NWIS because the NDWR database has more data for them
 nwis_rem <- c()
 for (s in seq(1, length(dupes))){
   x <- dupes[s,]
@@ -700,15 +731,33 @@ for (s in seq(1, length(dupes))){
   print(nwis[nwis_id,]$sttn_nm)
   nwis_rem <- c(nwis_rem, nwis_id)
 }
+print(nwis_rem)
 
+# Remove these sites from NWIS collection
 nwis_nodupes <- nwis[-c(nwis_rem),]
-nwis_nodupes
-nrow(nwis_pts)
+print(nwis_nodupes) # Should be a few rows less than priginal NWIS collection
+nrow(nwis)
 
 #----------------------------------
-# Combine spatial object with stats
+# Combine NWIS (duplicates removed) with NDWR points
 # ONLY SITES WITH CALCULATED TREND
 # Does not rectify ALL columns, just the important ones for now...
+
+# Rename the important columns from NDWR collection
+# These will be joined with NWIS collection
+ndwr <- ndwr %>% rename("site_no" = "Site_Name_Fix", "station_nm" = "Site_Name", 
+                         "dec_lat_va" = "Lat_DD_NAD", "dec_long_va" = "Lon_DD_NAD", 
+                         "New_Pval" = "New_Pval", "Old_Pval" = "Old_Pval",
+                         "n_effective" = "n_effective", "n_raw" = "n_raw", "Sens_Slope" = "Sens_Slope",
+                         "MinYear" = "MinYear", "MaxYear" = "MaxYear", "Notes" = "Notes")
+#combo <- st_join(nwis_nodupes, ndwr, largest = TRUE) # does the join, but adds .x or .y suffix to duplicate column names...
+#combo <- st_join(nwis_nodupes, ndwr, largest = TRUE) # hmm, not sure this is what i'm looking for but took forever to dun so didn't really find out. Description doesnt sound right tho
+#combo <- st_join(nwis_nodupes, ndwr, suffix = FALSE) # Nope, didn't do it
+#combo <- st_join(nwis_nodupes, left = TRUE, ndwr) # Nope, still got suffixes
+
+combo <- 
+
+
 combo <- full_join(nwis_nodupes@data, ndwr@data, by=c("site_no" = "Site_Name_Fix", "station_nm" = "Site_Name", 
                                                       "dec_lat_va" = "Lat_DD_NAD83", "dec_long_va" = "Lon_DD_NAD83", 
                                                       "New_Pval" = "New_Pval", "Old_Pval" = "Old_Pval",
@@ -743,10 +792,12 @@ head(combosp)
 
 
 # Export shapefile
-writeOGR(combosp, 
-         dsn="E:/RCF Data Recovery/Recovered Files/P00/GDE_Threats/Hydrology", 
-         layer="gwlevels_stats_110321", 
-         driver="ESRI Shapefile", overwrite_layer = TRUE)
+st_write(combosp, 'file_location/gwlevels_stats.shp')
+
+# writeOGR(combosp, 
+#          dsn="E:/RCF Data Recovery/Recovered Files/P00/GDE_Threats/Hydrology", 
+#          layer="gwlevels_stats_110321", 
+#          driver="ESRI Shapefile", overwrite_layer = TRUE)
 
 # Export CSV
 write.csv(combosp@data, "E:/RCF Data Recovery/Recovered Files/P00/GDE_Threats/Hydrology/gwlevels_stats_110321.csv")
