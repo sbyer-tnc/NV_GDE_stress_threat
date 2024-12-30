@@ -16,6 +16,7 @@ library(mblm)
 library(modifiedmk)
 library(dplyr)
 `%notin%` <- Negate(`%in%`) # Custom 'not in' function
+library(ggplot2)
 
 # USGS-derived packages to retrieve data in R
 # https://owi.usgs.gov/R/dataRetrieval.html#1 (tutorial)
@@ -133,6 +134,7 @@ ha_sub <- ha %>% filter(HYD_AREA %in% c('042', '039', '040', '041', '038', '043'
                                         '050', '049', '048', '047', '046', '037', '036', '035',
                                         '034', '033', '051', '052', '053', '054', '055', '056'))
 plot(ha_sub['HYD_AREA_N'])
+ha_all <- ha
 ha <- ha_sub
 
 # Use for-loop and annWL() to populate empty data frame with trend stats
@@ -423,6 +425,7 @@ site_loc3 <- readNWISsite(annWL_df_NWIS$SITENO[4001:nrow(annWL_df_NWIS)])
 combine_sites <- rbind(site_loc1, site_loc2, site_loc3)
 
 # Check that all rows from the trend dataframe (annWL_df_NWIS) have a geography (combine_sites) 
+#combine_sites <- readNWISsite(annWL_df_NWIS$SITENO)
 annWL_df_NWIS$SITENO %notin% combine_sites$site_no
 
 # Create sf object from combined sites 
@@ -702,9 +705,13 @@ nwis <- nwis_pts
 # # Option to read in data if outputted separately for NWIS and NDWR
 # ndwr <- st_read("C:/Users/sarah.byer/ndwr_gw_trends.shp")
 # nwis <- st_read("C:/Users/sarah.byer/nwis_gw_trends.shp")
+# st_crs(ndwr) <- st_crs("+proj=longlat +ellps=GRS80 +datum=NAD83 +no_defs ")
+# st_crs(nwis) <- st_crs("+proj=longlat +ellps=GRS80 +datum=NAD83 +no_defs ")
 
-## NOTE ##
+## NOTE! ##
 # If reading from previously-written outside file (i.e. shapefile), check field names as these may have been abbreviated
+# Use this snippet to rename columns if reading them in from csv:
+ndwr <- ndwr %>% dplyr::rename("" = "", "" = "")
 
 # Remove duplicate sites -
 # Some NWIS sites are already in NDWR Wellnet database - going to remove these from NWIS before combining
@@ -713,7 +720,7 @@ ndwr$sttn_nm2 <- gsub(" ", "", ndwr$Site_Name_Fix, fixed=TRUE)
 nwis$sttn_nm2 <- gsub(" ", "", nwis$station_nm, fixed=TRUE)
 
 dupes <- ndwr[which(ndwr$sttn_nm2 %in% nwis$sttn_nm2),]
-plot(dupes, add=T, col="orange")
+plot(st_geometry(dupes), col="black")
 
 # # OPTIONAL - Explore a single site (compare observations between NWIS and NDWR)
 # test <- nwis[grep(dupes$sttn_nm2[5], nwis$sttn_nm2, ignore.case=TRUE),]
@@ -735,53 +742,79 @@ print(nwis_rem)
 
 # Remove these sites from NWIS collection
 nwis_nodupes <- nwis[-c(nwis_rem),]
-print(nwis_nodupes) # Should be a few rows less than priginal NWIS collection
+print(nwis_nodupes)
 nrow(nwis)
+nrow(nwis_nodupes)  # Should be a few rows less than the original NWIS collection
 
 #----------------------------------
-# Combine NWIS (duplicates removed) with NDWR points
+# Combine NWIS (duplicates removed 'nwis_nodupes') with NDWR points
 # ONLY SITES WITH CALCULATED TREND
 # Does not rectify ALL columns, just the important ones for now...
 
-# Rename the important columns from NDWR collection
-# These will be joined with NWIS collection
-ndwr <- ndwr %>% rename("site_no" = "Site_Name_Fix", "station_nm" = "Site_Name", 
-                         "dec_lat_va" = "Lat_DD_NAD", "dec_long_va" = "Lon_DD_NAD", 
-                         "New_Pval" = "New_Pval", "Old_Pval" = "Old_Pval",
-                         "n_effective" = "n_effective", "n_raw" = "n_raw", "Sens_Slope" = "Sens_Slope",
-                         "MinYear" = "MinYear", "MaxYear" = "MaxYear", "Notes" = "Notes")
-#combo <- st_join(nwis_nodupes, ndwr, largest = TRUE) # does the join, but adds .x or .y suffix to duplicate column names...
-#combo <- st_join(nwis_nodupes, ndwr, largest = TRUE) # hmm, not sure this is what i'm looking for but took forever to dun so didn't really find out. Description doesnt sound right tho
-#combo <- st_join(nwis_nodupes, ndwr, suffix = FALSE) # Nope, didn't do it
-#combo <- st_join(nwis_nodupes, left = TRUE, ndwr) # Nope, still got suffixes
+# Add Source information
+ndwr$Source <- "NDWR WellNet Database"
+nwis_nodupes$Source <- "USGS NWIS"
 
-combo <- 
+# Join as dataframes first
+ndwr_df <- as.data.frame(ndwr)
+nwis_df <- as.data.frame(nwis_nodupes)
+combo_df <- full_join(nwis_df, ndwr_df, by=c("site_no" = "Site_Name_Fix", "station_nm" = "Site_Name", 
+                                             "dec_lat_va" = "Lat_DD_NAD", "dec_long_va" = "Lon_DD_NAD", 
+                                             "New_Pval" = "New_Pval", "Old_Pval" = "Old_Pval",
+                                             "n_effective" = "n_effective", "n_raw" = "n_raw", "Sens_Slope" = "Sens_Slope",
+                                             "MinYear" = "MinYear", "MaxYear" = "MaxYear", "Notes" = "Notes",
+                                             "Source" = "Source"))
+print(dim(combo_df))
+print(which(is.na(combo_df$site_no))) # Make sure all rows of site_no are populated (should have no NAs)
 
+# Drop geometry columns; will make new sf point object using lat/long columns
+combo_df <- combo_df %>% select(-c(geometry.x, geometry.y))
+combo_points <- sp::SpatialPointsDataFrame(coords = data.frame(combo_df$dec_long_va, combo_df$dec_lat_va),
+                                        data = combo_df) # Convert to spatialpointsdataframe
+combo_points <- st_as_sf(combo_points) # Convert that to sf object
+print(combo_points)
+st_crs(combo_points) <- st_crs("+proj=longlat +ellps=GRS80 +datum=NAD83 +no_defs ")
+plot(combo_points['Sens_Slope'])
+plot(combo_points['Source'])
 
-combo <- full_join(nwis_nodupes@data, ndwr@data, by=c("site_no" = "Site_Name_Fix", "station_nm" = "Site_Name", 
-                                                      "dec_lat_va" = "Lat_DD_NAD83", "dec_long_va" = "Lon_DD_NAD83", 
-                                                      "New_Pval" = "New_Pval", "Old_Pval" = "Old_Pval",
-                                                      "n_effective" = "n_effective", "n_raw" = "n_raw", "Sens_Slope" = "Sens_Slope",
-                                                      "MinYear" = "MinYear", "MaxYear" = "MaxYear", "Notes" = "Notes"))
-combosp <- SpatialPointsDataFrame(coords = data.frame(combo$dec_long_va, combo$dec_lat_va), combo)
-crs(combosp) <- crs(nwis)
-plot(combosp, add=T, col="blue")
-# CNRWA data added ~20 data points and updated others
 
 # Filter to p-value <= 0.05 and negative trend value (significant falling)
 # Or at least add as a marker/attribute
-combosp$SigFall <- 0
-sig_falling <- which(combosp$New_Pval <= 0.05 & combosp$Sens_Slope < 0)
-combosp$SigFall[c(sig_falling)] <- 1
+combo_points$SigFall <- 0 # Create a new column, default value == 0
+sig_falling <- which(combo_points$New_Pval <= 0.05 & combo_points$Sens_Slope < 0)
+combo_points$SigFall[c(sig_falling)] <- 1
 
 # Value of 100 where trend is significantly rising
-sig_rising <- which(combosp$New_Pval <= 0.05 & combosp$Sens_Slope > 0)
-combosp$SigFall[c(sig_rising)] <- 100
-head(combosp)
+sig_rising <- which(combo_points$New_Pval <= 0.05 & combo_points$Sens_Slope > 0)
+combo_points$SigFall[c(sig_rising)] <- 100
+head(combo_points)
 
-# Assign HA name and ID to wells
-crs(combosp) <- crs(ha)
-test <- over(combosp, ha[,c("HYD_AREA", "HYD_AREA_N")])
+# Plot to see how SigFall column can be used to visualize trends
+plot(combo_points['SigFall'])
+# Default value of zero means trend is not significant according to our criteria
+
+#----------------------------------
+# Assign HA name and ID number to wells
+# We often summarise data by HA; can help figure out where we have a lot/not much information regarding groundwater wells
+
+# Visualize first
+ggplot() +
+  geom_sf(data=ha) +
+  geom_sf(data=combo_points, aes(fill=as.factor(Sens_Slope)), pch=21, size=4) +
+  theme_bw()+
+  scale_fill_viridis_d("Sens Slope Value")
+
+# Simplify Hyd Areas; only need the ID and Name
+ha_simple <- ha %>% dplyr::select(HYD_AREA, HYD_AREA_N)
+ha_summary <- st_intersects(combo_points, ha) # eh not sure this is the way...
+
+# Join Hyd Area info to point feature
+test <- st_join(combo_points, ha_summary, left = FALSE)
+
+
+
+# Previously used 'over', doesn't work for sf objects
+test <- over(combo_points, ha[,c("HYD_AREA", "HYD_AREA_N")])
 head(test)
 dim(test)
 dim(combosp@data)
@@ -792,7 +825,7 @@ head(combosp)
 
 
 # Export shapefile
-st_write(combosp, 'file_location/gwlevels_stats.shp')
+st_write(combo_points, 'file_location/gwlevels_stats.shp')
 
 # writeOGR(combosp, 
 #          dsn="E:/RCF Data Recovery/Recovered Files/P00/GDE_Threats/Hydrology", 
