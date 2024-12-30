@@ -18,12 +18,10 @@ library(dplyr)
 `%notin%` <- Negate(`%in%`) # Custom 'not in' function
 library(ggplot2)
 
-# USGS-derived packages to retrieve data in R
+# USGS-derived package to retrieve data in R
 # https://owi.usgs.gov/R/dataRetrieval.html#1 (tutorial)
 #install.packages("dataRetrieval")
 library(dataRetrieval)
-#GRAN_pkg <- available.packages(contrib.url("https://owi.usgs.gov/R"))
-#names(GRAN_pkg[,1]) # Geological Survey R Archive Network 
 
 #---------------------------------------------------------------------
 #---------------------------------------------------------------------
@@ -98,7 +96,7 @@ annWL <- function(gw_observations, site_number){
 
 # Use Hydrographic Areas (HAs) to spatially-filter groundwater sites
 # Could use other polygons (i.e. WBDs aka HUCs)
-gdb <- "K:\\GIS3\\Projects\\GDE\\Maps\\GDE_Threats\\GDE_Threats.gdb" # Location (geodatabase in this case) for hydrographics areas (HAs)
+gdb <- "path_to_gdb/name.gdb" # Location (geodatabase in this case) for hydrographic areas
 fc_list <- st_layers(gdb)
 ha <- sf::st_read(gdb, layer = "hydrographic_basin_boundarie")
 ha <- sf::st_transform(ha, crs = "+proj=longlat +ellps=GRS80 +datum=NAD83 +no_defs ")
@@ -128,14 +126,6 @@ annWL_df <- data.frame(SITENO = as.character(), New_Pval = as.numeric(), Old_Pva
 # and run the loop starting from that Hydrographic Area
 # Ex. Running through all HAs, the loop may stop at Amargosa Valley (HA 230) which has a lot of observations AND wells
 #######
-
-print(ha$HYD_AREA)
-ha_sub <- ha %>% filter(HYD_AREA %in% c('042', '039', '040', '041', '038', '043', '044', '045',
-                                        '050', '049', '048', '047', '046', '037', '036', '035',
-                                        '034', '033', '051', '052', '053', '054', '055', '056'))
-plot(ha_sub['HYD_AREA_N'])
-ha_all <- ha
-ha <- ha_sub
 
 # Use for-loop and annWL() to populate empty data frame with trend stats
 for (j in seq(1, nrow(ha))){
@@ -218,15 +208,17 @@ for (j in seq(1, nrow(ha))){
 }
 
 # Define dataframe of annual water levels for NWIS groundwater sites
-# Loop run twice
+# Use this if loop is run twice
 # annWL_df_part1 <- annWL_df
 # annWL_df_part2 <- annWL_df
 # annWL_df_NWIS <- rbind(annWL_df_part1, annWL_df_part2)
 
-# Loop run once
+# Use this if loop is run once
 annWL_df_NWIS <- annWL_df
 head(annWL_df_NWIS)
 print(annWL_df_NWIS %>% filter(!is.na(Sens_Slope)))
+
+
 
 # Remove sites where siteid is BAD
 # ex. nchar(as.character(annWL_df_NWIS$SITENO[5611]))
@@ -240,14 +232,20 @@ for(i in seq(1, nrow(annWL_df_NWIS))){
 annWL_df_NWIS$SITENO[rem_index] # Print bad site numbers
 annWL_df_NWIS <- annWL_df_NWIS[-c(rem_index),] # Remove bad site numbers from df
 
-# Remove a couple additional sites
-rem_sites <- c(364640114050301, 364727114045601) # These sites have 2 entries each - remove one at least
-annWL_df_NWIS[which(annWL_df_NWIS$SITENO %in% rem_sites),]
-rem_site_index <- c(which(annWL_df_NWIS$SITENO %in% rem_sites))
-rem_site_index[c(1,3)]
-annWL_df_NWIS <- annWL_df_NWIS[-rem_site_index[c(1,3)],]
-dim(annWL_df_NWIS)
+# Check number of site records (each site should only have one row)
+check_sites <- data.frame(table(annWL_df_NWIS$SITENO))
+check_sites %>% filter(Freq > 1)
 
+
+# If a site has duplicates identify their row location and remove them
+# At the time of analysis, these sites have 2 identical rows each; need to remove one
+rem_sites <- c(364640114050301, 364727114045601)
+remove_index <- which(annWL_df_NWIS$SITENO %in% rem_sites)
+annWL_df_NWIS %>% filter(!row_number() %in% rem_index)
+
+# # If there are other sites that need to be dropped, use this snippet to remove them by Site Number
+# drop <- c()
+# annWL_df_NWIS <- annWL_df_NWIS %>% filter(SITENO %notin% drop)
 
 #----------------------------------
 # TNC received additional groundwater well data from Central Nevada Regional Water Authority
@@ -256,7 +254,6 @@ dim(annWL_df_NWIS)
 # Append CNRWA data to NWIS sites
 # Central NV Regional Water Authority has additional data not-yet integrated in NWIS
 cnrwa <- read.csv("path_to_csv\\cnrwa_add_well.csv")
-cnrwa <- read.csv("K:\\GIS3\\Projects\\GDE\\Tables\\cnrwa_add_wells.csv")
 head(cnrwa)
 cnrwa <- cnrwa %>% dplyr::mutate(DATE = as.Date(Date, format = "%m/%d/%Y"))
 cnrwa$YEAR <- as.numeric(substr(cnrwa$DATE, 1, 4)) 
@@ -423,9 +420,9 @@ site_loc1 <- readNWISsite(annWL_df_NWIS$SITENO[1:2000])
 site_loc2 <- readNWISsite(annWL_df_NWIS$SITENO[2001:4000])
 site_loc3 <- readNWISsite(annWL_df_NWIS$SITENO[4001:nrow(annWL_df_NWIS)])
 combine_sites <- rbind(site_loc1, site_loc2, site_loc3)
+#combine_sites <- readNWISsite(annWL_df_NWIS$SITENO) # Run if number of records is less than a couple thousand
 
 # Check that all rows from the trend dataframe (annWL_df_NWIS) have a geography (combine_sites) 
-#combine_sites <- readNWISsite(annWL_df_NWIS$SITENO)
 annWL_df_NWIS$SITENO %notin% combine_sites$site_no
 
 # Create sf object from combined sites 
@@ -444,8 +441,7 @@ plot(nwis_pts['Sens_Slope'])
 
 ## OPTION TO OUTPUT NOW
 # Write to point shapefile
-#st_write(nwis_pts, "file_location/nwis_gw_trends.shp")
-st_write(nwis_pts, "C:/Users/sarah.byer/nwis_gw_trends.shp")
+st_write(nwis_pts, "file_location/nwis_gw_trends.shp")
 
 
 #---------------------------------------------------------------------
@@ -466,8 +462,6 @@ st_write(nwis_pts, "C:/Users/sarah.byer/nwis_gw_trends.shp")
 
 # Get groundwater level data from csv
 filename <- "path_to_csv\\wellnet_gwlevels_092321.csv"
-#filename <- "C:\\Users\\sarah.byer\\Documents\\ArcGIS\\Projects\\Scratch\\ndwr_gw_measures_122024.csv"
-filename <- "C:\\Users\\sarah.byer\\Documents\\ndwr_gw_measures_122824.csv"
 wellobs <- read.csv(filename)
 
 # Make a list of unique site names
@@ -492,8 +486,6 @@ site_names = as.vector(unique(wellobs$Site_Name_Fix))
 
 # Shapefile option
 ndwr <- st_read("path_to_file\\filename.shp")
-ndwr <- st_read("C:\\Users\\sarah.byer\\Documents\\ArcGIS\\Projects\\Scratch\\ndwr_gw_sites_122024.shp")
-ndwr <- st_read("C:\\Users\\sarah.byer\\Documents\\ndwr_gw_sites_122824.shp")
 ndwr <- sf::st_transform(ndwr, crs = "+proj=longlat +ellps=GRS80 +datum=NAD83 +no_defs ")
 plot(ndwr['Basin'])
 
@@ -586,8 +578,7 @@ head(annWL_df_NDWR, 10)
 #----------------------------------
 # Append CNRWA data to NWIS sites
 # Central NV Regional Water Authority has additional data not-yet integrated in WellNet
-cnrwa <- read.csv("path_to_csv\\cnrwa_add_well.csv")
-cnrwa <- read.csv("K:\\GIS3\\Projects\\GDE\\Tables\\cnrwa_add_wells.csv")
+cnrwa <- read.csv("path_to_csv\\cnrwa_add_wells.csv")
 cnrwa <- cnrwa %>% dplyr::mutate(DATE_FORMAT = as.Date(Date, format = "%m/%d/%Y"))
 cnrwa$YEAR <- as.numeric(substr(cnrwa$DATE, 1, 4)) 
 head(cnrwa)
@@ -703,23 +694,23 @@ ndwr <- ndwr_pts
 nwis <- nwis_pts
 
 # # Option to read in data if outputted separately for NWIS and NDWR
-ndwr <- st_read("C:/Users/sarah.byer/ndwr_gw_trends.shp")
-nwis <- st_read("C:/Users/sarah.byer/nwis_gw_trends.shp")
-st_crs(ndwr) <- st_crs("+proj=longlat +ellps=GRS80 +datum=NAD83 +no_defs ")
-st_crs(nwis) <- st_crs("+proj=longlat +ellps=GRS80 +datum=NAD83 +no_defs ")
-
-## NOTE! ##
-# If reading from previously-written outside file (i.e. shapefile), check field names as these may have been abbreviated
-# Use this snippet to rename required columns if reading them in from csv:
-print(colnames(ndwr))
-ndwr <- ndwr %>% dplyr::rename("Site_Name_Fix" = "St_Nm_F", "Site_Name" = "Site_Nm", "Lat_DD_NAD" = "Lt_DD_NAD",
-                               "Lon_DD_NAD" = "Ln_DD_NAD", "New_Pval" = "New_Pvl", "Old_Pval" = "Old_Pvl", 
-                               "n_effective" = "n_ffctv", "Sens_Slope" = "Sns_Slp")
-
-print(colnames(nwis))
-nwis <- nwis %>% dplyr::rename("station_nm" = "sttn_nm", "dec_lat_va" = "dc_lt_v",
-                               "dec_long_va" = "dc_lng_", "New_Pval" = "New_Pvl", "Old_Pval" = "Old_Pvl", 
-                               "n_effective" = "n_ffctv", "Sens_Slope" = "Sns_Slp")
+# ndwr <- st_read("file_location/ndwr_gw_trends.shp")
+# nwis <- st_read("file_location/nwis_gw_trends.shp")
+# st_crs(ndwr) <- st_crs("+proj=longlat +ellps=GRS80 +datum=NAD83 +no_defs ")
+# st_crs(nwis) <- st_crs("+proj=longlat +ellps=GRS80 +datum=NAD83 +no_defs ")
+# 
+# ## NOTE! ##
+# # If reading from previously-written outside file (i.e. shapefile), check field names as these may have been abbreviated
+# # Use this snippet to rename required columns if reading them in from csv:
+# print(colnames(ndwr))
+# ndwr <- ndwr %>% dplyr::rename("Site_Name_Fix" = "St_Nm_F", "Site_Name" = "Site_Nm", "Lat_DD_NAD" = "Lt_DD_NAD",
+#                                "Lon_DD_NAD" = "Ln_DD_NAD", "New_Pval" = "New_Pvl", "Old_Pval" = "Old_Pvl", 
+#                                "n_effective" = "n_ffctv", "Sens_Slope" = "Sns_Slp")
+# 
+# print(colnames(nwis))
+# nwis <- nwis %>% dplyr::rename("station_nm" = "sttn_nm", "dec_lat_va" = "dc_lt_v",
+#                                "dec_long_va" = "dc_lng_", "New_Pval" = "New_Pvl", "Old_Pval" = "Old_Pvl", 
+#                                "n_effective" = "n_ffctv", "Sens_Slope" = "Sns_Slp")
 
 
 # Remove duplicate sites -
@@ -808,6 +799,10 @@ ggplot() +
 #----------------------------------
 # Assign HA name and ID number to wells
 # We often summarise data by HA; can help figure out where we have a lot/not much information regarding groundwater wells
+
+gdb <- "K:\\GIS3\\Projects\\GDE\\Maps\\GDE_Threats\\GDE_Threats.gdb" # Location (geodatabase in this case) for hydrographics areas (HAs)
+ha <- sf::st_read(gdb, layer = "hydrographic_basin_boundarie")
+ha <- sf::st_transform(ha, crs = "+proj=longlat +ellps=GRS80 +datum=NAD83 +no_defs ")
 
 # Visualize first
 p <- ggplot() +
