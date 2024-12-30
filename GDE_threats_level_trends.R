@@ -703,15 +703,24 @@ ndwr <- ndwr_pts
 nwis <- nwis_pts
 
 # # Option to read in data if outputted separately for NWIS and NDWR
-# ndwr <- st_read("C:/Users/sarah.byer/ndwr_gw_trends.shp")
-# nwis <- st_read("C:/Users/sarah.byer/nwis_gw_trends.shp")
-# st_crs(ndwr) <- st_crs("+proj=longlat +ellps=GRS80 +datum=NAD83 +no_defs ")
-# st_crs(nwis) <- st_crs("+proj=longlat +ellps=GRS80 +datum=NAD83 +no_defs ")
+ndwr <- st_read("C:/Users/sarah.byer/ndwr_gw_trends.shp")
+nwis <- st_read("C:/Users/sarah.byer/nwis_gw_trends.shp")
+st_crs(ndwr) <- st_crs("+proj=longlat +ellps=GRS80 +datum=NAD83 +no_defs ")
+st_crs(nwis) <- st_crs("+proj=longlat +ellps=GRS80 +datum=NAD83 +no_defs ")
 
 ## NOTE! ##
 # If reading from previously-written outside file (i.e. shapefile), check field names as these may have been abbreviated
-# Use this snippet to rename columns if reading them in from csv:
-ndwr <- ndwr %>% dplyr::rename("" = "", "" = "")
+# Use this snippet to rename required columns if reading them in from csv:
+print(colnames(ndwr))
+ndwr <- ndwr %>% dplyr::rename("Site_Name_Fix" = "St_Nm_F", "Site_Name" = "Site_Nm", "Lat_DD_NAD" = "Lt_DD_NAD",
+                               "Lon_DD_NAD" = "Ln_DD_NAD", "New_Pval" = "New_Pvl", "Old_Pval" = "Old_Pvl", 
+                               "n_effective" = "n_ffctv", "Sens_Slope" = "Sns_Slp")
+
+print(colnames(nwis))
+nwis <- nwis %>% dplyr::rename("station_nm" = "sttn_nm", "dec_lat_va" = "dc_lt_v",
+                               "dec_long_va" = "dc_lng_", "New_Pval" = "New_Pvl", "Old_Pval" = "Old_Pvl", 
+                               "n_effective" = "n_ffctv", "Sens_Slope" = "Sns_Slp")
+
 
 # Remove duplicate sites -
 # Some NWIS sites are already in NDWR Wellnet database - going to remove these from NWIS before combining
@@ -790,7 +799,10 @@ combo_points$SigFall[c(sig_rising)] <- 100
 head(combo_points)
 
 # Plot to see how SigFall column can be used to visualize trends
-plot(combo_points['SigFall'])
+ggplot() +
+   geom_sf(data=combo_points, aes(fill=as.factor(SigFall)), pch=21, size=4) +
+  theme_bw()+
+  scale_fill_viridis_d("Sens Slope Significance")
 # Default value of zero means trend is not significant according to our criteria
 
 #----------------------------------
@@ -798,123 +810,31 @@ plot(combo_points['SigFall'])
 # We often summarise data by HA; can help figure out where we have a lot/not much information regarding groundwater wells
 
 # Visualize first
-ggplot() +
-  geom_sf(data=ha) +
-  geom_sf(data=combo_points, aes(fill=as.factor(Sens_Slope)), pch=21, size=4) +
-  theme_bw()+
-  scale_fill_viridis_d("Sens Slope Value")
+p <- ggplot() +
+  geom_sf(data=ha)
+p + geom_sf(data=combo_points, aes(fill=as.factor(SigFall)), pch=21, size=4) +
+    theme_bw()+
+    scale_fill_viridis_d("Sens Slope Significance")
 
 # Simplify Hyd Areas; only need the ID and Name
 ha_simple <- ha %>% dplyr::select(HYD_AREA, HYD_AREA_N)
-ha_summary <- st_intersects(combo_points, ha) # eh not sure this is the way...
+ha_simple <- st_make_valid(ha_simple)
 
 # Join Hyd Area info to point feature
-test <- st_join(combo_points, ha_summary, left = FALSE)
-
-
-
-# Previously used 'over', doesn't work for sf objects
-test <- over(combo_points, ha[,c("HYD_AREA", "HYD_AREA_N")])
-head(test)
-dim(test)
-dim(combosp@data)
-
-combosp$HYD_AREA <- test$HYD_AREA
-combosp$HYD_AREA_NAME <- test$HYD_AREA_N
-head(combosp)
-
+ha_summary <- st_join(combo_points, ha_simple, left=TRUE)
+plot(ha_summary['HYD_AREA_N'])
 
 # Export shapefile
-st_write(combo_points, 'file_location/gwlevels_stats.shp')
+st_write(ha_summary, "C:/Users/sarah.byer/gwlevels_stats.shp")
+st_write(ha_summary, 'file_location/gwlevels_stats.shp')
 
-# writeOGR(combosp, 
-#          dsn="E:/RCF Data Recovery/Recovered Files/P00/GDE_Threats/Hydrology", 
-#          layer="gwlevels_stats_110321", 
-#          driver="ESRI Shapefile", overwrite_layer = TRUE)
-
-# Export CSV
-write.csv(combosp@data, "E:/RCF Data Recovery/Recovered Files/P00/GDE_Threats/Hydrology/gwlevels_stats_110321.csv")
-
-#-------------------------------------------------------------
-#-------------------------------------------------------------
-# Basin summary statistics
-
-# Basin names and ids with:
-# number of wells that meet trend criteria ("wells that we looked at")
-# number of significantly falling gw wells
-# most recent year of gw level observation
-
-
-x <- read.csv("E:/RCF Data Recovery/Recovered Files/P00/GDE_Threats/Hydrology/gwlevels_stats_110321.csv")
-colnames(x)
-x$ID <- as.character(x$X)
-
-test <- x %>% group_by(SigFall) %>% summarise(NumSites = n_distinct(ID))
-test$PropTrend <- test$NumSites/sum(test$NumSites)
-
-# Number of sites in HA
-test <- data.frame(x %>% group_by(HYD_AREA) %>% summarise(count = n_distinct(ID)))
-
-# Number of sites in HA with info on whether trend is significantly rising or falling
-test2 <- data.frame(x %>% group_by(HYD_AREA, SigFall) %>% summarise(count = n_distinct(ID)))
-
-
-# Collapse to one set of attributes for HA
-# Number of sites
-# Number of sig falling sites
-# Most recent year of observation
-
-x1 <- data.frame(x %>% group_by(HYD_AREA) %>% summarise(SiteDataCount=n_distinct(ID)))
-x2 <- data.frame(x %>% filter(SigFall==1) %>% group_by(HYD_AREA) %>% summarise(FallCount=n_distinct(ID)))
-x3 <- data.frame(x %>% filter(SigFall==0) %>% group_by(HYD_AREA) %>% summarise(NoTrendCount=n_distinct(ID)))
-x4 <- data.frame(x %>% filter(SigFall==100) %>% group_by(HYD_AREA) %>% summarise(RiseCount=n_distinct(ID)))
-
-xx <- left_join(x1, x2, by="HYD_AREA")
-xx <- left_join(xx, x3, by="HYD_AREA")
-xx <- left_join(xx, x4, by="HYD_AREA")
-xx <- left_join(xx, ha_year, by="HYD_AREA")
-head(xx)
-
-# Read in HA data
-gdb <- "E:\\RCF Data Recovery\\Recovered Files\\P00\\GDE_Threats\\Maps\\GDE_Threats.gdb"
-subset(ogrDrivers(), grepl("GDB", name))
-fc_list <- ogrListLayers(gdb)
-ha <- readOGR(dsn=gdb,layer="hydrographic_basin_boundaries")
-#ha <- spTransform(ha, CRS("+proj=longlat +ellps=GRS80 +datum=NAD83 +no_defs "))
-plot(ha)
-head(ha)
-
-ha@data <- left_join(ha@data, xx, by="HYD_AREA")
-head(ha@data)
-
-# Replace NAs with zeroes where applicable
-ha@data[is.na(ha$SiteDataCount),]$SiteDataCount <- 0
-ha@data[is.na(ha$FallCount),]$FallCount <- 0
-ha@data[is.na(ha$NoTrendCount),]$NoTrendCount <- 0
-ha@data[is.na(ha$RiseCount),]$RiseCount <- 0
-head(ha)
-
-ha@data[is.na(ha$RecentYear),]$RecentYear <- "No sites"
-ha@data[ha$RecentYear==-Inf,]$RecentYear <- "No data recorded for sites"
-head(ha)
-
-# Calculate proportion of wells that have falling levels for each HA
-ha@data$PropFall <- ha$FallCount/ha$SiteDataCount
-ha@data[is.na(ha$PropFall),]$PropFall <- -9999
-
-# write to shapefile
-writeOGR(ha, 
-         dsn="E:/RCF Data Recovery/Recovered Files/P00/GDE_Threats/Hydrology", 
-         layer="hydrographic_area_gwstats", 
-         driver="ESRI Shapefile", overwrite_layer = TRUE)
-
-# Write to csv
-ha@data[ha$PropFall==-9999,]$PropFall <- NA
-write.csv(ha@data, "E:/RCF Data Recovery/Recovered Files/P00/GDE_Threats/Hydrology/hydrographic_area_gwstats.csv")
+# Export to CSV if needed
+write.csv(ha_summary, "file_location/gwlevels_stats.csv")
 
 
 #-------------------------------------------------------------
 #-------------------------------------------------------------
+# ggplot snippet for plotting the annual average groundwater levels for a specific well
 # Example gw level time series showing trends
 
 # NWIS - 364329116402902
@@ -928,7 +848,8 @@ annavg$YEAR <- as.numeric(substr(annavg$`cut(DATE, "1 year")`, 1, 4))
 
 
 # GGplot - raw data/ annual measurements / trend line
-p <- ggplot(data=s, aes(x=DATE, y=lev_va)) + geom_line(aes(group=site_no), color="#616161") +
+p <- ggplot(data=s, aes(x=DATE, y=lev_va)) + 
+  geom_line(data = s, aes(group=site_no, x=DATE, y=lev_va), color="#616161") +
   geom_point(data=annavg, aes(x=as.Date(`cut(DATE, "1 year")`), y= lev_va), color="red") +
   geom_line(data=annavg, aes(x=as.Date(`cut(DATE, "1 year")`), y= lev_va), color="red") +
   theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
@@ -939,51 +860,5 @@ p <- ggplot(data=s, aes(x=DATE, y=lev_va)) + geom_line(aes(group=site_no), color
   labs(title = "USGS Groundwater Well - 364329116402902",
        subtitle = "Amargosa Valley, NV")
 p
-
-
-
-
-brteplot <- function(in_df, brte_no){
-  x_sub <- subset(in_df, BRTE > brte_no)
-  xagg <- aggregate(NDVI ~ Date, data = x_sub, mean, na.rm=TRUE)
-  xagg$PLOTNAME <- 0
-  p <- ggplot(data = x_sub, aes(x=Date, y=NDVI)) + geom_line(aes(group=PLOTNAME)) + 
-    geom_line(data=xagg, aes(x=Date, y=NDVI, group=PLOTNAME), color="red") +
-    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
-          plot.title = element_text(color = "black", size = 6, margin=margin(0,0,0,0)),
-          plot.subtitle = element_text(size = 5, vjust = -1)) + 
-    labs(title = as.character(x_sub$BRTE[1]),
-         subtitle = "WY2015 - WY2019 NDVI")
-  return(list(plot = p, sites = unique(unlist(x_sub$PLOTNAME)), all_ts = x_sub))
-}
-es <- data.frame(xmin = as.Date(c("2015-03-25", "2016-03-25", "2017-03-25", "2018-03-25", "2019-03-25")),
-                 xmax = as.Date(c("2015-04-25", "2016-04-25", "2017-04-25", "2018-04-25", "2019-04-25")),
-                 ymin = -Inf, ymax = Inf)
-ms <- data.frame(xmin = as.Date(c("2015-06-15", "2016-06-15", "2017-06-15", "2018-06-15", "2019-06-15")),
-                 xmax = as.Date(c("2015-07-15", "2016-07-15", "2017-07-15", "2018-07-15", "2019-07-15")),
-                 ymin = -Inf, ymax = Inf)
-p <- ggplot() + 
-  geom_rect(data = es, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
-            fill = "#59a4ff", alpha = 0.3) +
-  geom_rect(data = ms, aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
-            fill = "grey", alpha = 0.5) +
-  geom_line(data = combo, aes(x=date, y=mean_ndvi, color=SYSXCLA)) + 
-  scale_colour_manual(values=c("#0ea800", "#c76000")) +
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
-        plot.title = element_text(color = "black", size = 10, margin=margin(0,0,0,0)),
-        plot.subtitle = element_text(size = 9, vjust = -1),
-        legend.direction = "horizontal", 
-        legend.position = "bottom") +
-  labs(title = "Big Sagebrush - upland with trees",
-       subtitle = "2013 - 2019 Water Year NDVI")
-p
-
-
-
-# NDWR - 153 N21 E53 03BBDD2
-# http://water.nv.gov/WaterLevelDataChart.aspx?autoid=1112
-# by Winnemucca 1997 - 2021
-# Another option: http://water.nv.gov/WaterLevelDataChart.aspx?autoid=931
-
 
 
