@@ -13,7 +13,8 @@
 #-------------------------------------------------------------------------------
 
 # Import ArcGIS modules and check out spatial analyst extension
-import arcpy, os
+import arcpy
+import os
 import pandas as pd
 import numpy as np
 from arcpy import env
