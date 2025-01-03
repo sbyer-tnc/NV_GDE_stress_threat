@@ -1,5 +1,5 @@
 # NV_GDE_stress_threat
-Scripts used to estimate stressors and threats to groundwater dependent ecosystems in Nevada
+**Scripts used to estimate stressors and threats to groundwater dependent ecosystems in Nevada**
 
 Pre-requisites for running all scripts:
 - Nevada iGDE database (geodatabase or shapefiles)
