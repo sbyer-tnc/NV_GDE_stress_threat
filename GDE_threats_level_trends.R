@@ -682,8 +682,7 @@ plot(ndwr_pts['Sens_Slope']) # Plot sens slope value
 
 ## OPTION TO OUTPUT NOW
 # Write to point shapefile
-#st_write(ndwr_pts, "file_location/ndwr_gw_trends.shp")
-st_write(ndwr_pts, "C:/Users/sarah.byer/ndwr_gw_trends.shp")
+st_write(ndwr_pts, "file_location/ndwr_gw_trends.shp")
 
 #---------------------------------------------------------------------
 #---------------------------------------------------------------------
@@ -800,7 +799,7 @@ ggplot() +
 # Assign HA name and ID number to wells
 # We often summarise data by HA; can help figure out where we have a lot/not much information regarding groundwater wells
 
-gdb <- "K:\\GIS3\\Projects\\GDE\\Maps\\GDE_Threats\\GDE_Threats.gdb" # Location (geodatabase in this case) for hydrographics areas (HAs)
+gdb <- "path_to_gdb/name.gdb" # Location (geodatabase in this case) for hydrographics areas (HAs)
 ha <- sf::st_read(gdb, layer = "hydrographic_basin_boundarie")
 ha <- sf::st_transform(ha, crs = "+proj=longlat +ellps=GRS80 +datum=NAD83 +no_defs ")
 
@@ -820,7 +819,6 @@ ha_summary <- st_join(combo_points, ha_simple, left=TRUE)
 plot(ha_summary['HYD_AREA_N'])
 
 # Export shapefile
-st_write(ha_summary, "C:/Users/sarah.byer/gwlevels_stats.shp")
 st_write(ha_summary, 'file_location/gwlevels_stats.shp')
 
 # Export to CSV if needed
