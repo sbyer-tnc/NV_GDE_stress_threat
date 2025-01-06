@@ -10,10 +10,10 @@ Pre-requisites for running all scripts:
 
 Recommended order for running scripts to replicate entire analysis:
 1. GDE_threats_level_trends.R (calculate trends in groundwater levels for groundwater stress from withdrawal/pumping)
-2. GDE_StressThreat_Withdrawals.ipynb (consoliate groundwater trend data and basin commitments to calculate stress and threat to GDEs from pumping/appropriation)
-3. GDE_Threats_Climate.ipynb (apply modeled climate threat to GDEs)
+2. GDE_StressThreat_Withdrawals.ipynb (create a working copy of the GDEs in a geodatabase, consoliate groundwater trend data and basin commitments to calculate stress and threat to GDEs from pumping/appropriation)
+3. GDE_Threats_Climate.ipynb (Apply modeled climate threat to GDEs. Need basins with climate statistics and recharge areas dataset)
 4. GDE_Stress_Ungulates.ipynb (apply ungulate impacts to GDEs as a stressor)
-5. GDE_StressThreat_Species.ipynb (apply non-native species distributions and potential to GDEs)
+5. GDE_StressThreat_Species.ipynb (apply non-native species distributions and potential to GDEs, requires species downloads from several sources)
 6. GDE_StressThreat_Humans.ipynb (apply human activity like urbanization and diversions to GDEs as stressors and threats)
 7. GDE_StressThreat_Code.ipynb (consoliate all stress and threat values across GDEs; create bivariate field to visualize both stress and threat levels)
-8. GDE_StressThreat_GDB.ipynb (format field names and aliases for stressor and threat data in a new geodatabase)
+8. GDE_StressThreat_GDB.ipynb (copy GDE layers with stress/threat values to new geodatabase, format field names and aliases for stressor and threat data in a new geodatabase)
